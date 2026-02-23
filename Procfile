@@ -1,1 +1,1 @@
-worker: python agent1_scout.py
+worker: python scheduler.py
