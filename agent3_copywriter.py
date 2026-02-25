@@ -187,13 +187,20 @@ Retorne APENAS JSON válido, sem markdown, sem explicações."""
 
     try:
         text = response.content[0].text.strip()
+        # Remove markdown se vier
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
                 text = text[4:]
-        return json.loads(text)
+        text = text.strip()
+        parsed = json.loads(text)
+        # Se Claude retornou lista diretamente, encapsula em dict
+        if isinstance(parsed, list):
+            return {"slides": parsed}
+        return parsed
     except Exception as e:
         print(f"Erro ao parsear copy: {e}")
+        print(f"Resposta raw: {response.content[0].text[:300]}")
         return {}
 
 
