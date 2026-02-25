@@ -361,13 +361,25 @@ body {{ width:1080px; height:1350px; overflow:hidden; background:#000; font-fami
 </body></html>"""
 
 
+# ─── INSTALAR PLAYWRIGHT ─────────────────────────────────────────
+
+def ensure_playwright_installed():
+    import subprocess
+    subprocess.run(["playwright", "install", "chromium"], capture_output=True, text=True)
+    subprocess.run(["playwright", "install-deps", "chromium"], capture_output=True, text=True)
+    print("   ✅ Chromium pronto!")
+
+
 # ─── RENDERIZAR HTML → PNG ───────────────────────────────────────
 
 async def render_slide_to_png(html_content: str, output_path: str):
     """Usa Playwright para renderizar o HTML em PNG 1080x1350px."""
+    ensure_playwright_installed()
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
-        page    = await browser.new_page(viewport={"width": 1080, "height": 1350})
+        browser = await p.chromium.launch(
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]
+        )
+        page = await browser.new_page(viewport={"width": 1080, "height": 1350})
         await page.set_content(html_content, wait_until="networkidle")
         await page.screenshot(path=output_path, full_page=False)
         await browser.close()
@@ -448,12 +460,22 @@ async def run_designer(copy_result: dict) -> list[str]:
     angulo  = copy_result.get("angulo", {})
     copy    = copy_result.get("copy", {})
     formato = copy_result.get("formato", "carrossel")
+    bot     = Bot(token=TELEGRAM_TOKEN)
 
     print("🎨 Agente 4 — Designer iniciado...")
-    print(f"📌 Trend: {trend.get('titulo', '')}")
-    print(f"📐 Formato: {formato}")
 
-    # Baixa foto de perfil
+    # Avisa que começou
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=(
+            f"🎨 *Designer iniciado!*\n\n"
+            f"📌 {trend.get('titulo', '')}\n"
+            f"📐 Formato: {formato.capitalize()}\n\n"
+            f"⏳ Gerando imagens no Freepik..."
+        ),
+        parse_mode="Markdown"
+    )
+
     await download_profile_image()
 
     png_paths   = []
@@ -461,17 +483,20 @@ async def run_designer(copy_result: dict) -> list[str]:
 
     if formato == "carrossel":
         slides = copy.get("slides", [])
-        print(f"\n🖼️  Processando {len(slides)} slides...")
+        total  = len(slides)
 
         for slide in slides:
-            n     = slide.get("slide", 0)
+            n      = slide.get("slide", 0)
             titulo = slide.get("titulo_bold", "")
             corpo  = slide.get("corpo", "")
             prompt = slide.get("prompt_imagem", "")
 
-            print(f"\n── Slide {n}/10 ──")
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=f"🖼️ Gerando slide *{n}/{total}*...",
+                parse_mode="Markdown"
+            )
 
-            # Define formato do slide
             if n == 1:
                 fmt = "cover"
             elif n == 8:
@@ -483,30 +508,31 @@ async def run_designer(copy_result: dict) -> list[str]:
             else:
                 fmt = "light"
 
-            # Gera imagem se necessário
             image_path = None
             if prompt and fmt not in ["text_only", "dark"]:
                 image_path = await generate_image_freepik(prompt, n)
+                if image_path:
+                    await bot.send_message(
+                        chat_id=TELEGRAM_CHAT_ID,
+                        text=f"✅ Imagem slide {n} gerada!"
+                    )
 
-            # Monta HTML
-            html = build_slide_html(n, titulo, corpo, image_path, fmt)
-
-            # Renderiza PNG
+            html     = build_slide_html(n, titulo, corpo, image_path, fmt)
             png_path = f"/tmp/wavy_slide_{n:02d}.png"
             await render_slide_to_png(html, png_path)
             png_paths.append(png_path)
 
-            # Upload pro Drive
             from datetime import datetime
             date_str  = datetime.now().strftime("%Y%m%d")
             file_name = f"wavy_{date_str}_slide_{n:02d}.png"
             link = upload_to_drive(png_path, GOOGLE_DRIVE_FOLDER_ID, file_name)
             if link:
                 drive_links.append(link)
+                await bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=f"☁️ Slide {n} enviado pro Drive!"
+                )
 
-    print(f"\n✅ {len(png_paths)} slides gerados e enviados pro Drive!")
-
-    # Notifica Telegram
     folder_link = drive_links[0] if drive_links else ""
     await notify_telegram_done(
         folder_link,
