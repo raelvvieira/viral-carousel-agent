@@ -23,6 +23,7 @@ ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN     = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID   = int(os.getenv("TELEGRAM_CHAT_ID"))
 FREEPIK_API_KEY    = os.getenv("FREEPIK_API_KEY")
+FREEPIK_CHARACTER_ID = os.getenv("FREEPIK_CHARACTER_ID", "")  # opcional: @rael character
 GOOGLE_DRIVE_FOLDER_ID = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON")  # JSON como string
 
@@ -185,12 +186,13 @@ async def get_image_for_slide(prompt: str, slide_num: int) -> str:
     return await generate_image_freepik(prompt, slide_num)
 
 
-async def generate_image_freepik(prompt: str, slide_num: int) -> str:
+async def generate_image_freepik(prompt: str, slide_num: int, use_character: bool = False) -> str:
     """
     Gera imagem no Freepik Mystic API.
+    Se use_character=True e FREEPIK_CHARACTER_ID estiver configurado, usa o character @rael.
     Retorna o caminho local do arquivo PNG baixado.
     """
-    full_prompt = enrich_image_prompt(prompt)
+    full_prompt = enrich_image_prompt(prompt) if not use_character else prompt
     print(f"   🎨 Gerando imagem slide {slide_num}: {full_prompt[:80]}...")
 
     headers = {
@@ -202,6 +204,18 @@ async def generate_image_freepik(prompt: str, slide_num: int) -> str:
         "prompt": full_prompt,
         **FREEPIK_CONFIG
     }
+
+    # Adiciona character se for o slide 10 e o ID estiver configurado
+    if use_character and FREEPIK_CHARACTER_ID:
+        payload["styling"] = {
+            "characters": [
+                {
+                    "id": FREEPIK_CHARACTER_ID,
+                    "strength": 90
+                }
+            ]
+        }
+        print(f"   👤 Usando character @rael (ID: {FREEPIK_CHARACTER_ID})")
 
     async with httpx.AsyncClient(timeout=60) as http:
         # 1. Dispara a geração
@@ -248,6 +262,30 @@ async def generate_image_freepik(prompt: str, slide_num: int) -> str:
 
     print(f"   ⚠️  Timeout na geração do slide {slide_num}")
     return None
+
+
+async def get_image_for_cta_slide(titulo: str, corpo: str) -> str:
+    """
+    Gera imagem específica para o slide 10 (CTA).
+    Se FREEPIK_CHARACTER_ID estiver configurado → usa o character @rael.
+    Caso contrário → gera imagem profissional genérica.
+    """
+    if FREEPIK_CHARACTER_ID:
+        print("   👤 Slide 10: usando character @rael")
+        prompt = (
+            f"Professional Brazilian digital marketing expert, confident pose, "
+            f"modern office or studio background, warm cinematic lighting, "
+            f"editorial portrait style, Instagram-ready, 4k"
+        )
+        return await generate_image_freepik(prompt, slide_num=10, use_character=True)
+    else:
+        print("   🖼️  Slide 10: character não configurado, gerando imagem genérica")
+        prompt = (
+            f"Confident marketing professional in modern workspace, "
+            f"dramatic cinematic lighting, editorial photograph style, "
+            f"high contrast, professional composition, Instagram engagement, 4k"
+        )
+        return await generate_image_freepik(prompt, slide_num=10, use_character=False)
 
 
 # ─── MONTAR HTML DO SLIDE ────────────────────────────────────────
@@ -668,18 +706,22 @@ async def run_designer(copy_result: dict) -> list[str]:
             else:
                 fmt = "light"
 
-            # Enriquece prompt com pessoa icônica se houver marca na copy
-            if prompt:
-                prompt = enrich_image_prompt(prompt, titulo, corpo)
-
             image_path = None
-            if prompt and fmt not in ["text_only", "dark"]:
-                image_path = await get_image_for_slide(prompt, n)
-                if image_path:
-                    await bot.send_message(
-                        chat_id=TELEGRAM_CHAT_ID,
-                        text=f"✅ Imagem slide {n} gerada!"
-                    )
+
+            if fmt == "cta":
+                # Slide 10: usa character @rael se disponível, senão genérico
+                image_path = await get_image_for_cta_slide(titulo, corpo)
+
+            elif fmt not in ["text_only", "dark"] and prompt:
+                # Slides normais: enriquece prompt e escolhe Stock vs Mystic
+                enriched_prompt = enrich_image_prompt(prompt, titulo, corpo)
+                image_path = await get_image_for_slide(enriched_prompt, n)
+
+            if image_path:
+                await bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=f"✅ Imagem slide {n} gerada!"
+                )
 
             html     = build_slide_html(n, titulo, corpo, image_path, fmt)
             png_path = f"/tmp/wavy_slide_{n:02d}.png"
