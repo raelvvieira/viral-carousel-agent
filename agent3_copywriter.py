@@ -159,8 +159,68 @@ REGRAS:
 
 # ─── GERAR COPY COM CLAUDE ───────────────────────────────────────
 
+def research_topic(trend: dict, angulo: dict) -> str:
+    """Pesquisa dados reais sobre o tema na internet antes de gerar a copy."""
+    query = f"{angulo.get('titulo', trend.get('titulo', ''))} {trend.get('topico', '')} marketing 2025 2026 dados pesquisa"
+
+    print(f"   🔎 Pesquisando: {query}")
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1500,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{
+                "role": "user",
+                "content": f"""Pesquise dados concretos sobre esse tema para embasar um carrossel de marketing:
+
+Tema: {angulo.get('titulo', trend.get('titulo', ''))}
+Tópico: {trend.get('topico', '')}
+Descrição: {trend.get('descricao', '')}
+
+Busque:
+- Números, percentuais, estatísticas recentes
+- Casos reais de empresas ou mercados
+- Dados de pesquisas ou estudos
+- Exemplos concretos do Brasil ou global
+- Fatos verificáveis que podem ser usados como âncora de credibilidade
+
+Retorne apenas os dados mais relevantes e concretos encontrados, em formato de lista. Sem análise, só os fatos."""
+            }]
+        )
+
+        # Extrai texto de todas as respostas
+        resultado = []
+        for block in response.content:
+            if hasattr(block, "text") and block.text:
+                resultado.append(block.text)
+
+        pesquisa = "
+".join(resultado).strip()
+        print(f"   ✅ Pesquisa concluída — {len(pesquisa)} caracteres")
+        return pesquisa
+
+    except Exception as e:
+        print(f"   ⚠️ Pesquisa falhou: {e} — continuando sem dados extras")
+        return ""
+
+
 def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
-    """Gera a copy completa seguindo a estratégia da Wavy."""
+    """Pesquisa o tema na internet e gera a copy completa seguindo a estratégia da Wavy."""
+
+    formato = angulo.get("formato", "carrossel")
+    strategy = COPY_STRATEGY_CAROUSEL if formato == "carrossel" else COPY_STRATEGY_REELS
+
+    # Pesquisa dados reais antes de gerar
+    print("   🌐 Pesquisando dados reais sobre o tema...")
+    dados_pesquisa = research_topic(trend, angulo)
+    dados_section = ""
+    if dados_pesquisa:
+        dados_section = f"""
+DADOS REAIS PESQUISADOS (use como âncora de credibilidade nos slides):
+{dados_pesquisa}
+
+"""
 
     formato = angulo.get("formato", "carrossel")
     strategy = COPY_STRATEGY_CAROUSEL if formato == "carrossel" else COPY_STRATEGY_REELS
@@ -170,12 +230,18 @@ def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
 Escreva a copy completa dos 10 slides do carrossel.
 Para cada slide retorne:
 - "slide": número do slide (1-10)
-- "titulo_bold": texto em negrito (título principal do slide) — máximo 10 palavras
-- "corpo": texto do corpo — máximo 3 linhas curtas
+- "titulo_bold": texto em negrito (título principal do slide) — máximo 7 palavras, só primeira letra maiúscula
+- "corpo": texto do corpo — máximo 3 linhas, 35-40 palavras, padrão 2 frases curtas + 1 longa
 - "prompt_imagem": descrição em inglês para gerar imagem cinematográfica no Freepik (slides 1-7 e 10 têm imagem)
 
 Slides sem imagem: slide 8 (só texto) e slide 9 (fundo escuro, só texto).
-Slide 10: é o CTA final — inclui uma "palavra_cta" para o comentário (ex: "framework", "método", "guia").
+Slide 10: CTA conversacional, tom de conversa, inclui "palavra_cta" para comentário.
+
+PROFUNDIDADE (diretriz geral):
+- Use os dados pesquisados onde fizerem sentido narrativo — não force número em todo slide
+- O objetivo é que o carrossel como um todo tenha densidade: dados, casos reais, lógica irrefutável distribuídos naturalmente
+- Cada slide deve conter algo que o leitor não sabia ou não havia conectado — nunca o óbvio
+- Deixe o tema guiar onde entra dado e onde entra insight emocional
 """
     else:
         instruction = """
@@ -188,6 +254,27 @@ Retorne:
 - "prompt_imagem_capa": descrição em inglês para gerar thumbnail cinematográfica no Freepik
 - "legenda_instagram": legenda completa pra postar junto com o reels
 """
+
+    # Carrega referências de inspiração salvas via /inspiracao
+    inspiracoes_txt = ""
+    try:
+        import json as _json
+        with open("/tmp/wavy_inspiracoes.json", "r", encoding="utf-8") as _f:
+            refs = _json.load(_f)
+        if refs:
+            inspiracoes_txt = "
+
+REFERÊNCIAS DE ESTILO (carrosséis reais enviados como inspiração):
+"
+            for i, r in enumerate(refs[-3:], 1):  # usa as 3 mais recentes
+                inspiracoes_txt += f"
+Referência {i} ({r.get("data", "")}):
+{r.get("texto", "")}
+"
+            inspiracoes_txt += "
+Use o tom, ritmo e estrutura dessas referências como modelo."
+    except Exception:
+        pass
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
@@ -209,7 +296,16 @@ REGRAS ABSOLUTAS DE ESCRITA:
 4. TOM: afirma fenômenos, não aconselha. Usa "o mercado", "as marcas", "a geração" — nunca "você deve" ou "aprenda a".
 5. CONTINUIDADE: cada slide termina com tensão aberta que puxa para o próximo. É uma corrente lógica, não slides isolados.
 
-TREND:
+PROFUNDIDADE — REGRA CENTRAL:
+- Cada carrossel precisa ter no mínimo 3 dados concretos distribuídos nos slides (percentuais, números, pesquisas, casos reais)
+- Dados âncora a credibilidade — sem dado, vira opinião. Com dado, vira jornalismo.
+- Use os DADOS REAIS PESQUISADOS fornecidos. Se não houver dado para um slide específico, crie tensão com lógica irrefutável ou analogia precisa.
+- Profundidade não é quantidade de texto — é densidade de informação por linha.
+- NUNCA escreva um slide raso que qualquer pessoa poderia escrever sem pesquisa. Cada slide deve conter algo que o leitor não sabia ou não havia conectado antes.
+- Exemplo raso: "As redes sociais mudaram o marketing." — qualquer um sabe isso.
+- Exemplo profundo: "O alcance orgânico do Facebook caiu 89% em 10 anos. O que era gratuito virou produto." — isso ancora, surpreende, educa.
+
+{dados_section}TREND:
 - Título: {trend['titulo']}
 - Descrição: {trend['descricao']}
 - Tópico: {trend['topico']}
@@ -232,6 +328,8 @@ IMPORTANTE sobre prompt_imagem:
 - Pode incluir logos de empresas conhecidas se relevante
 - Sempre em inglês
 - Exemplo: "Cinematic editorial photo of Mark Zuckerberg presenting Meta AI, dramatic lighting, futuristic stage, ultra-sharp, professional composition"
+
+{inspiracoes_txt}
 
 Retorne APENAS JSON válido, sem markdown, sem explicações."""
         }]
