@@ -38,23 +38,160 @@ FREEPIK_CONFIG = {
     "filter_nsfw": True
 }
 
-FREEPIK_BASE_PROMPT = (
-    "Cinematic editorial photograph, {description}, "
-    "clean modern aesthetic, dramatic lighting, ultra-sharp, "
-    "professional composition, futuristic minimalist background, "
-    "high contrast, magazine quality, 4k"
-)
+# Mapeamento de marcas → pessoas icônicas
+BRAND_ICONS = {
+    "meta": "Mark Zuckerberg",
+    "facebook": "Mark Zuckerberg",
+    "instagram": "Mark Zuckerberg",
+    "whatsapp": "Mark Zuckerberg",
+    "google": "Sundar Pichai",
+    "youtube": "Sundar Pichai",
+    "apple": "Tim Cook",
+    "microsoft": "Satya Nadella",
+    "openai": "Sam Altman",
+    "chatgpt": "Sam Altman",
+    "anthropic": "Dario Amodei",
+    "claude": "Dario Amodei",
+    "tesla": "Elon Musk",
+    "x": "Elon Musk",
+    "twitter": "Elon Musk",
+    "spacex": "Elon Musk",
+    "amazon": "Jeff Bezos",
+    "nike": "Phil Knight",
+    "tiktok": "Shou Zi Chew",
+    "linkedin": "Ryan Roslansky",
+    "spotify": "Daniel Ek",
+    "uber": "Dara Khosrowshahi",
+    "airbnb": "Brian Chesky",
+    "netflix": "Ted Sarandos",
+}
+
+def enrich_image_prompt(prompt: str, titulo: str = "", corpo: str = "") -> str:
+    """
+    Enriquece o prompt de imagem com:
+    1. Pessoa icônica se a copy mencionar uma marca conhecida
+    2. Estilo base cinematográfico para engajamento no Instagram
+    """
+    texto_completo = (prompt + " " + titulo + " " + corpo).lower()
+
+    # Detecta marca e substitui por pessoa icônica
+    person_hint = ""
+    for brand, person in BRAND_ICONS.items():
+        if brand in texto_completo:
+            person_hint = f"{person}, "
+            break
+
+    # Monta prompt enriquecido
+    enriched = (
+        f"Cinematic editorial photograph, {person_hint}{prompt}, "
+        f"dramatic lighting, ultra-sharp focus, professional composition, "
+        f"high contrast, magazine quality, "
+        f"visually striking for Instagram engagement, 4k"
+    )
+    return enriched
+
+
+FREEPIK_BASE_PROMPT = "{description}"  # prompt já vem enriquecido via enrich_image_prompt
 
 
 # ─── GERAR IMAGEM NO FREEPIK ─────────────────────────────────────
+
+async def search_freepik_stock(query: str, slide_num: int) -> str:
+    """
+    Busca foto real no Freepik Stock.
+    Retorna o caminho local do arquivo baixado.
+    """
+    print(f"   📷 Buscando foto stock: {query[:60]}...")
+
+    headers = {"x-freepik-api-key": FREEPIK_API_KEY}
+
+    async with httpx.AsyncClient(timeout=30) as http:
+        # Busca no banco de fotos
+        resp = await http.get(
+            "https://api.freepik.com/v1/resources",
+            headers=headers,
+            params={
+                "term": query,
+                "filters[content_type][photo]": "1",
+                "filters[orientation][portrait]": "1",
+                "limit": 5,
+                "order": "relevance"
+            }
+        )
+
+        if resp.status_code != 200:
+            print(f"   ❌ Erro Stock: {resp.status_code}")
+            return None
+
+        data  = resp.json()
+        items = data.get("data", [])
+
+        if not items:
+            print(f"   ⚠️  Nenhuma foto stock encontrada para: {query}")
+            return None
+
+        # Pega a primeira foto com preview disponível
+        for item in items:
+            previews = item.get("image", {}).get("source", {})
+            url = (
+                previews.get("url") or
+                item.get("previews", [{}])[0].get("url") if item.get("previews") else None
+            )
+            if url:
+                img_resp = await http.get(url)
+                path = f"/tmp/slide_{slide_num}_stock.jpg"
+                with open(path, "wb") as f:
+                    f.write(img_resp.content)
+                print(f"   ✅ Foto stock slide {slide_num} baixada!")
+                return path
+
+    return None
+
+
+def should_use_stock(prompt: str) -> bool:
+    """
+    Decide se usa foto real (stock) ou IA (Mystic) baseado no prompt.
+    Stock: quando o tema pede pessoas reais, lugares, objetos concretos.
+    Mystic: quando pede composição abstrata, futurista, cinematográfica.
+    """
+    stock_keywords = [
+        "person", "people", "team", "crowd", "audience", "athlete",
+        "entrepreneur", "businessman", "office", "meeting", "conference",
+        "city", "street", "restaurant", "gym", "running", "workout",
+        "phone", "laptop", "computer", "device", "product",
+        "real photo", "authentic", "candid", "lifestyle"
+    ]
+    prompt_lower = prompt.lower()
+    matches = sum(1 for kw in stock_keywords if kw in prompt_lower)
+    return matches >= 2  # 2+ palavras concretas = stock
+
+
+async def get_image_for_slide(prompt: str, slide_num: int) -> str:
+    """
+    Escolhe entre Freepik Stock e Freepik Mystic baseado no prompt.
+    Fallback automático se um falhar.
+    """
+    use_stock = should_use_stock(prompt)
+
+    if use_stock:
+        print(f"   🔀 Slide {slide_num}: usando Stock (tema concreto)")
+        path = await search_freepik_stock(prompt, slide_num)
+        if path:
+            return path
+        print(f"   🔀 Stock falhou, tentando Mystic...")
+
+    # Mystic (IA) como opção principal ou fallback
+    print(f"   🔀 Slide {slide_num}: usando Mystic (IA)")
+    return await generate_image_freepik(prompt, slide_num)
+
 
 async def generate_image_freepik(prompt: str, slide_num: int) -> str:
     """
     Gera imagem no Freepik Mystic API.
     Retorna o caminho local do arquivo PNG baixado.
     """
-    full_prompt = FREEPIK_BASE_PROMPT.format(description=prompt)
-    print(f"   🎨 Gerando imagem slide {slide_num}: {prompt[:60]}...")
+    full_prompt = enrich_image_prompt(prompt)
+    print(f"   🎨 Gerando imagem slide {slide_num}: {full_prompt[:80]}...")
 
     headers = {
         "x-freepik-api-key": FREEPIK_API_KEY,
@@ -531,9 +668,13 @@ async def run_designer(copy_result: dict) -> list[str]:
             else:
                 fmt = "light"
 
+            # Enriquece prompt com pessoa icônica se houver marca na copy
+            if prompt:
+                prompt = enrich_image_prompt(prompt, titulo, corpo)
+
             image_path = None
             if prompt and fmt not in ["text_only", "dark"]:
-                image_path = await generate_image_freepik(prompt, n)
+                image_path = await get_image_for_slide(prompt, n)
                 if image_path:
                     await bot.send_message(
                         chat_id=TELEGRAM_CHAT_ID,
