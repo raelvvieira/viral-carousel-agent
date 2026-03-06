@@ -394,20 +394,43 @@ def upload_to_drive(file_path: str, folder_id: str, file_name: str) -> str:
         creds_info = json.loads(GOOGLE_CREDENTIALS_JSON)
         creds = service_account.Credentials.from_service_account_info(
             creds_info,
-            scopes=["https://www.googleapis.com/auth/drive.file"]
+            scopes=["https://www.googleapis.com/auth/drive"]
         )
         service = build("drive", "v3", credentials=creds)
 
         file_metadata = {
             "name": file_name,
-            "parents": [folder_id]
+            "parents": [folder_id],
+            "driveId": folder_id
         }
-        media   = MediaFileUpload(file_path, mimetype="image/png")
-        file    = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields="id, webViewLink"
-        ).execute()
+        media = MediaFileUpload(file_path, mimetype="image/png", resumable=True)
+
+        # Tenta upload normal primeiro
+        try:
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields="id, webViewLink",
+                supportsAllDrives=True
+            ).execute()
+        except Exception:
+            # Fallback: upload sem parent (raiz do Drive da service account)
+            file_metadata_simple = {"name": file_name}
+            media2 = MediaFileUpload(file_path, mimetype="image/png", resumable=True)
+            file = service.files().create(
+                body=file_metadata_simple,
+                media_body=media2,
+                fields="id, webViewLink"
+            ).execute()
+            # Move para a pasta depois
+            file_id = file.get("id")
+            service.files().update(
+                fileId=file_id,
+                addParents=folder_id,
+                removeParents="root",
+                supportsAllDrives=True,
+                fields="id, webViewLink"
+            ).execute()
 
         link = file.get("webViewLink", "")
         print(f"   ☁️  Upload OK: {file_name} → {link}")
@@ -522,25 +545,41 @@ async def run_designer(copy_result: dict) -> list[str]:
             await render_slide_to_png(html, png_path)
             png_paths.append(png_path)
 
-            from datetime import datetime
-            date_str  = datetime.now().strftime("%Y%m%d")
-            file_name = f"wavy_{date_str}_slide_{n:02d}.png"
-            link = upload_to_drive(png_path, GOOGLE_DRIVE_FOLDER_ID, file_name)
-            if link:
-                drive_links.append(link)
-                await bot.send_message(
-                    chat_id=TELEGRAM_CHAT_ID,
-                    text=f"☁️ Slide {n} enviado pro Drive!"
-                )
+        # Envia todos os slides de uma vez como álbum no Telegram
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=(
+                f"✅ *{len(png_paths)} slides gerados!*\n\n"
+                f"📤 Enviando carrossel...\n"
+                f"📌 _{trend.get('titulo', '')}_"
+            ),
+            parse_mode="Markdown"
+        )
 
-    folder_link = drive_links[0] if drive_links else ""
-    await notify_telegram_done(
-        folder_link,
-        trend.get("titulo", ""),
-        len(png_paths)
-    )
+        # Envia como media group (álbum) — máx 10 por envio
+        from telegram import InputMediaPhoto
+        media_group = []
+        for i, png_path in enumerate(png_paths):
+            with open(png_path, "rb") as f:
+                media_group.append(InputMediaPhoto(media=f.read()))
 
-    return drive_links
+        await bot.send_media_group(
+            chat_id=TELEGRAM_CHAT_ID,
+            media=media_group
+        )
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=(
+                f"🎉 *Carrossel pronto!*\n\n"
+                f"📌 {trend.get('titulo', '')}\n"
+                f"🖼️ {len(png_paths)} slides\n\n"
+                f"_Salve as imagens acima para postar no Instagram!_"
+            ),
+            parse_mode="Markdown"
+        )
+
+    return png_paths
 
 
 if __name__ == "__main__":
