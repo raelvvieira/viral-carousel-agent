@@ -195,8 +195,7 @@ Retorne apenas os dados mais relevantes e concretos encontrados, em formato de l
             if hasattr(block, "text") and block.text:
                 resultado.append(block.text)
 
-        pesquisa = "
-".join(resultado).strip()
+        pesquisa = "\n".join(resultado).strip()
         print(f"   ✅ Pesquisa concluída — {len(pesquisa)} caracteres")
         return pesquisa
 
@@ -262,17 +261,10 @@ Retorne:
         with open("/tmp/wavy_inspiracoes.json", "r", encoding="utf-8") as _f:
             refs = _json.load(_f)
         if refs:
-            inspiracoes_txt = "
-
-REFERÊNCIAS DE ESTILO (carrosséis reais enviados como inspiração):
-"
+            inspiracoes_txt = "\n\nREFERÊNCIAS DE ESTILO (carrosséis reais enviados como inspiração):\n"
             for i, r in enumerate(refs[-3:], 1):  # usa as 3 mais recentes
-                inspiracoes_txt += f"
-Referência {i} ({r.get("data", "")}):
-{r.get("texto", "")}
-"
-            inspiracoes_txt += "
-Use o tom, ritmo e estrutura dessas referências como modelo."
+                inspiracoes_txt += f"\nReferência {i} ({r.get('data', '')}):\n{r.get('texto', '')}\n"
+            inspiracoes_txt += "\nUse o tom, ritmo e estrutura dessas referências como modelo."
     except Exception:
         pass
 
