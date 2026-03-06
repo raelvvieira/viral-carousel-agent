@@ -14,19 +14,17 @@ from anthropic import Anthropic
 # ─── CONFIGURAÇÕES ───────────────────────────────────────────────
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 NOTION_TOKEN      = os.getenv("NOTION_TOKEN")
-NOTION_DB_TRENDS  = os.getenv("NOTION_DB_TRENDS")   # ID da base de trends no Notion
+NOTION_DB_TRENDS  = os.getenv("NOTION_DB_TRENDS")
 
 client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 # ─── FONTES MONITORADAS ──────────────────────────────────────────
 SOURCES = [
-    # RSS / feeds públicos
     "https://feeds.feedburner.com/socialmediaexaminer",
     "https://blog.hootsuite.com/feed/",
     "https://searchengineland.com/feed",
     "https://www.jonloomer.com/feed/",
     "https://marketingland.com/feed",
-    # Reddit via API pública (sem auth)
     "https://www.reddit.com/r/PPC/top.json?limit=10&t=week",
     "https://www.reddit.com/r/FacebookAds/top.json?limit=10&t=week",
     "https://www.reddit.com/r/artificial/top.json?limit=10&t=week",
@@ -44,7 +42,6 @@ TOPICS = [
 # ─── FUNÇÕES DE BUSCA ────────────────────────────────────────────
 
 async def fetch_reddit(url: str, client_http: httpx.AsyncClient) -> list[dict]:
-    """Busca posts do Reddit via JSON público."""
     try:
         headers = {"User-Agent": "wavy-scout-bot/1.0"}
         resp = await client_http.get(url, headers=headers, timeout=10)
@@ -66,7 +63,6 @@ async def fetch_reddit(url: str, client_http: httpx.AsyncClient) -> list[dict]:
 
 
 async def fetch_rss(url: str, client_http: httpx.AsyncClient) -> list[dict]:
-    """Busca artigos via RSS."""
     try:
         resp = await client_http.get(url, timeout=10, follow_redirects=True)
         import xml.etree.ElementTree as ET
@@ -90,7 +86,6 @@ async def fetch_rss(url: str, client_http: httpx.AsyncClient) -> list[dict]:
 
 
 async def collect_all_content() -> list[dict]:
-    """Coleta conteúdo de todas as fontes em paralelo."""
     all_content = []
     async with httpx.AsyncClient() as http:
         tasks = []
@@ -99,28 +94,39 @@ async def collect_all_content() -> list[dict]:
                 tasks.append(fetch_reddit(source, http))
             else:
                 tasks.append(fetch_rss(source, http))
-        
+
         results = await asyncio.gather(*tasks)
         for result in results:
             all_content.extend(result)
-    
+
     return all_content
 
 
 # ─── ANÁLISE COM CLAUDE ──────────────────────────────────────────
 
-def analyze_trends_with_claude(raw_content: list[dict]) -> list[dict]:
+def analyze_trends_with_claude(raw_content: list[dict], excluded_titles: list[str] = None) -> list[dict]:
     """
-    Usa Claude para analisar o conteúdo coletado e retornar
-    as top 5 trends mais relevantes com score de viralidade.
+    Usa Claude para analisar o conteúdo e retornar top 5 trends.
+    Se excluded_titles for passado, Claude evita sugerir temas similares.
     """
-    # Prepara resumo do conteúdo pra enviar pro Claude
     content_summary = "\n".join([
         f"- [{item['source']}] {item['title']} (score: {item.get('score', 0)}, comments: {item.get('comments', 0)})"
-        for item in raw_content[:80]  # limita pra não explodir o contexto
+        for item in raw_content[:80]
     ])
 
     today = datetime.now().strftime("%d/%m/%Y")
+
+    # Bloco de exclusão — só aparece se houver temas anteriores
+    exclusion_block = ""
+    if excluded_titles:
+        lista = "\n".join(f"- {t}" for t in excluded_titles)
+        exclusion_block = f"""
+IMPORTANTE: Os temas abaixo JÁ FORAM mostrados ao usuário nesta sessão. 
+NÃO repita nem sugira temas similares ou relacionados a eles:
+{lista}
+
+Traga ângulos completamente diferentes — outros tópicos, outras plataformas, outros problemas.
+"""
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
@@ -130,7 +136,7 @@ def analyze_trends_with_claude(raw_content: list[dict]) -> list[dict]:
             "content": f"""Você é um analista de tendências de marketing digital especializado em conteúdo viral para Instagram.
 
 Data de hoje: {today}
-
+{exclusion_block}
 Abaixo estão os títulos e fontes coletados de blogs, Reddit e feeds de marketing digital nas últimas horas:
 
 {content_summary}
@@ -153,7 +159,7 @@ Retorne APENAS um JSON válido neste formato (sem explicações, sem markdown):
       "score_viralidade": 85,
       "angulos_sugeridos": [
         "Ângulo 1 para carrossel ou reels",
-        "Ângulo 2 para carrossel ou reels", 
+        "Ângulo 2 para carrossel ou reels",
         "Ângulo 3 para carrossel ou reels"
       ],
       "fonte": "Nome da fonte original"
@@ -167,7 +173,6 @@ Retorne APENAS um JSON válido neste formato (sem explicações, sem markdown):
 
     try:
         text = response.content[0].text.strip()
-        # Remove possível markdown se vier
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -175,14 +180,12 @@ Retorne APENAS um JSON válido neste formato (sem explicações, sem markdown):
         return json.loads(text)
     except json.JSONDecodeError as e:
         print(f"Erro ao parsear JSON do Claude: {e}")
-        print(f"Resposta: {response.content[0].text}")
         return {"trends": [], "data_coleta": today, "total_fontes_analisadas": 0}
 
 
 # ─── SALVAR NO NOTION ────────────────────────────────────────────
 
 async def save_to_notion(trends_data: dict):
-    """Salva as trends encontradas na base do Notion."""
     if not NOTION_TOKEN or not NOTION_DB_TRENDS:
         print("⚠️  Notion não configurado — pulando salvamento.")
         return
@@ -237,28 +240,29 @@ async def save_to_notion(trends_data: dict):
 
 # ─── EXECUTAR SCOUT ──────────────────────────────────────────────
 
-async def run_scout() -> dict:
-    """Função principal do Agente 1."""
+async def run_scout(excluded_titles: list[str] = None) -> dict:
+    """
+    Função principal do Agente 1.
+    excluded_titles: lista de títulos já mostrados — Claude evitará repetir.
+    """
     print("🔍 Agente 1 — Scout iniciado...")
     print(f"📅 Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    if excluded_titles:
+        print(f"🚫 Excluindo {len(excluded_titles)} temas já vistos")
     print("📡 Coletando conteúdo das fontes...")
 
-    # 1. Coleta conteúdo
     raw_content = await collect_all_content()
     print(f"✅ {len(raw_content)} itens coletados de {len(SOURCES)} fontes")
 
-    # 2. Analisa com Claude
     print("🧠 Analisando tendências com Claude...")
-    trends_data = analyze_trends_with_claude(raw_content)
+    trends_data = analyze_trends_with_claude(raw_content, excluded_titles=excluded_titles)
     print(f"✅ {len(trends_data.get('trends', []))} trends identificadas")
 
-    # 3. Salva no Notion
     print("📝 Salvando no Notion...")
     await save_to_notion(trends_data)
 
-    # 4. Exibe resultado
     print("\n" + "="*50)
-    print("📊 TOP 5 TRENDS DA SEMANA:")
+    print("📊 TOP 5 TRENDS:")
     print("="*50)
     for i, trend in enumerate(trends_data.get("trends", []), 1):
         print(f"\n{i}. {trend['titulo']}")
@@ -271,7 +275,6 @@ async def run_scout() -> dict:
 
 if __name__ == "__main__":
     result = asyncio.run(run_scout())
-    # Salva resultado em arquivo pra passar pro Agente 2
     with open("/tmp/trends_result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
     print("\n✅ Scout finalizado. Resultado salvo em /tmp/trends_result.json")
