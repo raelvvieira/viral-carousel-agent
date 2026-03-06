@@ -24,62 +24,103 @@ client = Anthropic(api_key=ANTHROPIC_API_KEY)
 COPY_STRATEGY_CAROUSEL = """
 ESTRATÉGIA DE COPY — CARROSSEL (Estilo Editorial Wavy)
 
-ESTRUTURA DOS 10 SLIDES:
+REFERÊNCIA DE ESTILO: Leo Baltazar, Caio Carneiro, conteúdo editorial de marketing viral brasileiro.
 
-Slide 1 — COVER (Hook + Interrupção)
-- Afirmação polêmica, contraintuitiva ou revelação chocante
-- NÃO usa pergunta — usa afirmação direta com tensão
-- Cria "dívida mental": o leitor PRECISA deslizar pra fechar a história
-- Exemplos de motores: Ameaça ("Quem não entender isso..."), Revelação ("X é Y — e ninguém sabe"), Quebra de percepção ("X não é Y... é Z")
+━━━━━━━━━━━━━━━━
+REGRAS DE ESCRITA — ABSOLUTAS
+━━━━━━━━━━━━━━━━
 
-Slide 2 — PROBLEMA (Espelho)
-- Mostra o que "todo mundo acredita" e cria identificação imediata
-- Leitor pensa: "sou eu"
-- Contextualização rápida: "Durante décadas..." / "Tudo começou quando..."
+CAPITALIZAÇÃO:
+- Apenas a primeira letra da frase em maiúsculo
+- NUNCA title case ("O Amor Virou Algoritmo" está ERRADO)
+- CORRETO: "O amor virou algoritmo."
+- Nomes próprios, siglas e marcas mantêm capitalização normal
 
-Slide 3 — CONTRASTE (Fricção)
-- Aponta o erro da visão comum e cria fricção
-- Quebra o "piloto automático" da crença antiga
-- Estrutura "certo... ERRADO" disfarçada
+PONTUAÇÃO E RITMO:
+- Ponto final cria respiração — use com intenção, não como lista
+- Padrão de ouro: 2 frases curtas (socos) + 1 frase longa (ancoragem)
+- Exemplo: "Não é ruído. É fadiga estrutural. A geração que cresceu online está cansada de gamificar afeto."
+- NUNCA sequências de 4+ frases curtas seguidas — vira telegrama
+- Vírgula para listar, ponto para respirar, travessão para contrastar
 
-Slide 4 — DIAGNÓSTICO (Culpado Oculto)
-- Explica o que está por trás do problema
-- Revela o "culpado oculto" — algo que a pessoa não havia considerado
-- Leitor sente: "agora faz sentido"
+VOLUME DE TEXTO:
+- Título: 4 a 7 palavras. Nunca mais de uma linha visual.
+- Corpo: 2 a 4 frases. Máximo 35-40 palavras.
+- Se precisar de mais palavras, o argumento está frouxo — corte, não expanda
 
-Slide 5 — O VILÃO (Inimigo Comum)
-- Nomeia o obstáculo (algoritmo, crença, método, sistema)
-- Externaliza parte da culpa (alívio emocional)
-- Direciona raiva/frustração pra algo claro
+TOM E VOZ:
+- Jornalístico-editorial. Nunca coach motivacional.
+- Afirma fenômenos. Não aconselha o leitor diretamente.
+- Usa "a geração", "o mercado", "as marcas" — fala sobre o mundo, não para o leitor
+- Dados concretos como âncora: percentuais, números, fatos verificáveis
+- Metáforas simples e precisas: "gamificar afeto", "cards descartáveis", "química real"
+- NUNCA: "você precisa", "aprenda a", "descubra como", "dica", "passo a passo"
 
-Slide 6 — REFRAME (Novo Jogo)
-- Traz a nova visão e reposiciona a mentalidade
-- Não dá "dicas" — dá um novo sistema de interpretação
-- "O jogo real é..." / "A lição não é sobre X... é sobre Y"
+CONTINUIDADE ENTRE SLIDES:
+- Cada slide termina com tensão aberta que puxa para o próximo
+- É uma corrente lógica, não slides independentes
+- Estrutura: Problema → Prova → Diagnóstico → Virada → Por que funciona → Conclusão filosófica
 
-Slide 7 — A LIÇÃO (Consequência)
-- Mostra o que muda quando a nova visão é adotada
-- Amplifica desejo do ganho E medo da perda simultaneamente
+━━━━━━━━━━━━━━━━
+ESTRUTURA DOS 10 SLIDES
+━━━━━━━━━━━━━━━━
 
-Slide 8 — PROVA (Sem imagem — só texto)
-- Solidifica a crença nova com dados, casos reais ou lógica irrefutável
+Slide 1 — CAPA (Pergunta ou afirmação que para o scroll)
+- Pode ser pergunta direta ("Por que X está fazendo Y?") ou afirmação contraintuitiva
+- Precisa criar lacuna mental: o leitor PRECISA virar para fechar a história
+- Tom jornalístico — como manchete de revista de negócios
+- Exemplo: "Por que a geração Z está deletando o Tinder para encontrar amor em clubes de corrida."
+
+Slide 2 — PROBLEMA (Dado + contextualização)
+- Abre com dado concreto ou fato verificável no título
+- Corpo contextualiza o problema com profundidade
+- Termina com diagnóstico que abre tensão para o próximo slide
+- Exemplo título: "O Tinder perdeu milhões de usuários nos últimos anos."
+
+Slide 3 — PROVA (Amplificação do problema)
+- Outro dado ou evidência que confirma e amplifica o problema
+- Mostra que não é caso isolado — é tendência
+- Exemplo título: "79% dos jovens relatam burnout com apps de namoro."
+
+Slide 4 — DIAGNÓSTICO (O porquê profundo)
+- Explica a causa raiz do problema
+- Revela algo que o leitor não havia considerado
+- Frase curta e precisa no título — máximo 5 palavras
+- Exemplo título: "O amor virou algoritmo."
+
+Slide 5 — VIRADA (A alternativa surge)
+- Apresenta o contraponto, a nova tendência, o movimento oposto
+- Usa dado para ancorar a virada
+- Exemplo título: "Enquanto isso, os clubes explodem."
+
+Slide 6 — MECANISMO (Por que funciona)
+- Explica o mecanismo por trás da virada
+- Insight emocional ou psicológico
+- Exemplo título: "Sofrer juntos cria vínculo."
+
+Slide 7 — APROFUNDAMENTO (Camada extra)
+- Adiciona outra dimensão ao argumento
+- Expande o insight com nova perspectiva
+- Exemplo título: "A academia virou o novo bar."
+
+Slide 8 — PROVA CIENTÍFICA (Sem imagem — só texto)
+- Âncora lógica/científica para o argumento emocional dos slides anteriores
+- Dados, neurociência, pesquisa, lógica irrefutável
 - Reduz ceticismo — sem isso vira só opinião bem escrita
+- Exemplo título: "Endorfina > algoritmo."
 
-Slide 9 — PROVOCAÇÃO (Penúltimo — fundo escuro)
-- Crescimento real não vem de empurrões — vem de estrutura
-- Deixa o leitor com desconforto, autoavaliação, vontade de comentar
+Slide 9 — CONCLUSÃO FILOSÓFICA (Fundo escuro)
+- Eleva o argumento para uma verdade maior
+- Deixa o leitor com reflexão, não com resposta
+- Tom: observação inteligente sobre o mundo
+- Exemplo título: "Não é sobre namoro. É sobre autenticidade."
 
-Slide 10 — CTA (Final — fundo preto com foto)
-- Pergunta direta que obriga escolha
-- NÃO termina com "e aí, gostou?"
-- Modelo: "Você vai continuar fazendo X? Ou vai Y?"
-- Inclui instrução: "Comente '[palavra]' e eu te mando..."
-
-REGRAS DE MICROCOPY:
-- Frases curtas. Pausas visuais. Ritmo.
-- Máximo 3 linhas por bloco de texto
-- Nunca parágrafos longos
-- Tom editorial — não de coach
+Slide 10 — CTA (Conversacional — sem imperativo agressivo)
+- Tom de conversa, não de ordem
+- Pode usar primeira pessoa ("Vai por mim...")
+- Pede ação simples: seguir, comentar, salvar
+- NUNCA: "E aí, gostou?", "Me conta nos comentários!", "Compartilhe se fez sentido"
+- Exemplo: "Vai por mim, essa conta não vai aparecer de novo... Então já toca em seguir para receber mais conteúdos como esse."
 """
 
 COPY_STRATEGY_REELS = """
@@ -153,9 +194,20 @@ Retorne:
         max_tokens=3000,
         messages=[{
             "role": "user",
-            "content": f"""Você é o Copywriter da Wavy — agência de marketing digital.
-Seu estilo é editorial, tenso, cinematográfico. Nunca de coach motivacional.
-Tom: direto, inteligente, provoca reflexão. Público: empreendedores e gestores de marketing digital brasileiros.
+            "content": f"""Você é o Copywriter da Wavy — agência de marketing digital brasileira.
+Seu estilo é jornalístico-editorial, cinematográfico, inteligente. NUNCA coach motivacional, NUNCA lista de dicas.
+Referência de estilo: Leo Baltazar, Caio Carneiro — conteúdo editorial viral sobre negócios e marketing.
+Público: empreendedores e gestores de marketing digital brasileiros.
+
+REGRAS ABSOLUTAS DE ESCRITA:
+1. CAPITALIZAÇÃO: apenas primeira letra da frase em maiúsculo. NUNCA title case.
+   ERRADO: "O Mercado Está Mudando Rápido"
+   CORRETO: "O mercado está mudando rápido"
+2. RITMO: padrão ouro = 2 frases curtas (socos) + 1 frase longa (ancoragem). Nunca 4+ frases curtas seguidas.
+   Exemplo: "Não é ruído. É fadiga estrutural. A geração que cresceu online está cansada de gamificar afeto."
+3. VOLUME: título 4-7 palavras. Corpo máximo 35-40 palavras por slide.
+4. TOM: afirma fenômenos, não aconselha. Usa "o mercado", "as marcas", "a geração" — nunca "você deve" ou "aprenda a".
+5. CONTINUIDADE: cada slide termina com tensão aberta que puxa para o próximo. É uma corrente lógica, não slides isolados.
 
 TREND:
 - Título: {trend['titulo']}
