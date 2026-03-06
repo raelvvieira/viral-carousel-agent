@@ -207,35 +207,9 @@ Retorne APENAS JSON válido, sem markdown, sem explicações."""
 # ─── ENVIAR COPY PRO TELEGRAM ────────────────────────────────────
 
 async def send_copy_to_telegram(copy_data: dict, angulo: dict):
-    """Envia preview da copy pro Telegram para aprovação."""
-    bot    = Bot(token=TELEGRAM_TOKEN)
+    """Envia a copy COMPLETA pro Telegram para aprovação."""
+    bot     = Bot(token=TELEGRAM_TOKEN)
     formato = angulo.get("formato", "carrossel")
-
-    if formato == "carrossel":
-        slides = copy_data.get("slides", [])
-        texto  = f"✍️ *Copy do Carrossel gerada!*\n\n"
-        texto += f"📌 *{angulo['titulo']}*\n"
-        texto += f"🖼️ {len(slides)} slides\n\n"
-        texto += "━━━━━━━━━━━━━━━━\n"
-
-        # Preview dos primeiros 3 slides
-        for slide in slides[:3]:
-            n = slide.get('slide', '')
-            texto += f"\n*Slide {n}*\n"
-            texto += f"_{slide.get('titulo_bold', '')}_\n"
-            texto += f"{slide.get('corpo', '')[:100]}...\n"
-
-        texto += "\n━━━━━━━━━━━━━━━━\n"
-        texto += f"_...e mais {len(slides)-3} slides_\n\n"
-        texto += "👇 *Aprovar e gerar as artes?*"
-
-    else:
-        texto  = f"✍️ *Script do Reels gerado!*\n\n"
-        texto += f"📌 *{angulo['titulo']}*\n\n"
-        texto += f"🎬 *Hook (0-3s):*\n_{copy_data.get('hook', '')}_\n\n"
-        texto += f"⚡ *Clímax:*\n_{copy_data.get('climax', '')}_\n\n"
-        texto += f"🔚 *Final:*\n_{copy_data.get('cta_final', '')}_\n\n"
-        texto += "👇 *Aprovar esse script?*"
 
     botoes = [
         [
@@ -245,12 +219,70 @@ async def send_copy_to_telegram(copy_data: dict, angulo: dict):
     ]
     markup = InlineKeyboardMarkup(botoes)
 
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text=texto,
-        parse_mode="Markdown",
-        reply_markup=markup
-    )
+    if formato == "carrossel":
+        slides = copy_data.get("slides", [])
+
+        # Cabeçalho
+        cabecalho  = f"✍️ *Copy do Carrossel gerada!*\n\n"
+        cabecalho += f"📌 *{angulo['titulo']}*\n"
+        cabecalho += f"🖼️ {len(slides)} slides\n"
+        cabecalho += f"━━━━━━━━━━━━━━━━"
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=cabecalho,
+            parse_mode="Markdown"
+        )
+
+        # Envia cada slide como mensagem separada
+        for slide in slides:
+            n      = slide.get("slide", "")
+            titulo = slide.get("titulo_bold", "")
+            corpo  = slide.get("corpo", "")
+            prompt = slide.get("prompt_imagem", "")
+
+            texto  = f"🖼️ *Slide {n}/10*\n"
+            texto += f"━━━━━━━━━━━━━━━━\n\n"
+            texto += f"*Título:*\n{titulo}\n\n"
+            texto += f"*Corpo:*\n{corpo}\n"
+            if prompt:
+                texto += f"\n_🎨 Imagem: {prompt}_"
+
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=texto,
+                parse_mode="Markdown"
+            )
+
+        # Mensagem final com botões de aprovação
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="━━━━━━━━━━━━━━━━\n\n👇 *Aprovar essa copy ou refazer?*",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
+
+    else:
+        # Reels — envia script completo
+        desenvolvimento = copy_data.get("desenvolvimento", [])
+        dev_texto = "\n".join([f"• {d}" for d in desenvolvimento])
+
+        texto  = f"✍️ *Script do Reels gerado!*\n\n"
+        texto += f"📌 *{angulo['titulo']}*\n"
+        texto += f"━━━━━━━━━━━━━━━━\n\n"
+        texto += f"🎬 *Hook (0-3s):*\n{copy_data.get('hook', '')}\n\n"
+        texto += f"📈 *Desenvolvimento (3-20s):*\n{dev_texto}\n\n"
+        texto += f"⚡ *Clímax:*\n{copy_data.get('climax', '')}\n\n"
+        texto += f"🔚 *CTA Final:*\n{copy_data.get('cta_final', '')}\n\n"
+        texto += f"📱 *Legenda Instagram:*\n{copy_data.get('legenda_instagram', '')}\n\n"
+        texto += "━━━━━━━━━━━━━━━━\n\n👇 *Aprovar esse script?*"
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=texto,
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
 
 
 # ─── HANDLER DE CALLBACKS ────────────────────────────────────────
