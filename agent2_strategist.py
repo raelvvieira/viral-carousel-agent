@@ -87,10 +87,12 @@ Trend identificada:
 Sua tarefa: gerar 3 ângulos de conteúdo viral diferentes para essa trend.
 
 Para cada ângulo considere:
-- Qual formato funciona melhor (carrossel 10 slides ou reels 30-60s)
+- O formato é sempre carrossel de 10 slides
 - Qual é o hook principal (o que vai parar o scroll)
 - Qual emoção dominante (indignação, surpresa, identificação, medo, admiração)
 - Para qual perfil de seguidor é mais relevante
+
+IMPORTANTE: O formato deve ser SEMPRE "carrossel" — nunca "reels".
 
 Retorne APENAS um JSON válido neste formato:
 {{
@@ -108,8 +110,8 @@ Retorne APENAS um JSON válido neste formato:
     {{
       "numero": 2,
       "titulo": "Título do ângulo 2",
-      "formato": "reels",
-      "hook": "Hook do reels",
+      "formato": "carrossel",
+      "hook": "Hook do carrossel",
       "emocao": "surpresa",
       "descricao": "Descrição do ângulo 2",
       "perfil_alvo": "Gestores de tráfego"
