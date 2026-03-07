@@ -163,9 +163,14 @@ Escreva a copy completa dos 10 slides. Para cada slide retorne:
 - "corpo": corpo do texto, max 35-40 palavras, padrao 2 frases curtas + 1 longa
 - "prompt_imagem": descricao em ingles para imagem cinematografica no Freepik (slides 1-7 e 10 tem imagem; slides 8 e 9 nao tem)
 
+REGRA ESPECIAL SLIDE 1 (CAPA):
+- "titulo_bold": manchete forte, 4-7 palavras, impacto maximo - e o unico texto visivel
+- "corpo": deixe como string vazia "" - a capa nao tem corpo, so titulo
+- "prompt_imagem": imagem cinematografica de fundo que reforce o tema
+
 Retorne APENAS JSON valido neste formato:
 {{"slides": [
-  {{"slide": 1, "titulo_bold": "...", "corpo": "...", "prompt_imagem": "..."}},
+  {{"slide": 1, "titulo_bold": "...", "corpo": "", "prompt_imagem": "..."}},
   {{"slide": 2, "titulo_bold": "...", "corpo": "...", "prompt_imagem": "..."}},
   ...
 ]}}"""}]
