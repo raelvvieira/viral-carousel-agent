@@ -104,11 +104,17 @@ Retorne apenas os dados mais relevantes em formato de lista. Sem analise, so os 
 
 def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
     """Gera a copy completa dos 10 slides."""
+    import time
+
     print("   Pesquisando dados reais...")
     dados_pesquisa = research_topic(trend, angulo)
     dados_section = ""
     if dados_pesquisa:
         dados_section = f"\nDADOS REAIS PESQUISADOS (use como ancora de credibilidade):\n{dados_pesquisa}\n"
+
+    # Aguarda 15s para evitar rate limit entre pesquisa e geracao da copy
+    print("   Aguardando 15s para evitar rate limit...")
+    time.sleep(15)
 
     # Carrega referencias de inspiracao
     inspiracoes_txt = ""
@@ -123,10 +129,13 @@ def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
     except Exception:
         pass
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=3000,
-        messages=[{"role": "user", "content": f"""Voce e o Copywriter da Wavy - agencia de marketing digital brasileira.
+    # Retry com backoff em caso de rate limit
+    for tentativa in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=3000,
+                messages=[{"role": "user", "content": f"""Voce e o Copywriter da Wavy - agencia de marketing digital brasileira.
 Estilo: jornalistico-editorial, cinematografico, inteligente. NUNCA coach motivacional.
 Referencia: Leo Baltazar, Caio Carneiro.
 Publico: empreendedores e gestores de marketing digital brasileiros.
@@ -160,7 +169,19 @@ Retorne APENAS JSON valido neste formato:
   {{"slide": 2, "titulo_bold": "...", "corpo": "...", "prompt_imagem": "..."}},
   ...
 ]}}"""}]
-    )
+            )
+            break  # sucesso, sai do retry
+        except Exception as e:
+            if "rate_limit" in str(e).lower() or "429" in str(e):
+                espera = 30 * (tentativa + 1)
+                print(f"   Rate limit! Aguardando {espera}s antes de tentar novamente...")
+                time.sleep(espera)
+                if tentativa == 2:
+                    print("   Rate limit persistente, retornando vazio")
+                    return {}
+            else:
+                print(f"   Erro na chamada Claude: {e}")
+                return {}
 
     try:
         text = response.content[0].text.strip()
