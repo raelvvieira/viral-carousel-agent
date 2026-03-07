@@ -325,3 +325,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+# Alias para compatibilidade com o Start Command do Railway
+run_full_pipeline = main
