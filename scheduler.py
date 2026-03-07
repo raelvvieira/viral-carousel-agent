@@ -14,7 +14,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 from agent1_scout import run_scout
 from agent2_strategist import run_strategist, set_angulo_escolhido
-from agent3_copywriter import run_copywriter
+from agent3_copywriter import run_copywriter, set_copy_decision
 from agent4_designer import run_designer
 
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
@@ -233,6 +233,17 @@ async def handle_callback(update, context):
         except Exception as e:
             log.error(f"Erro ao processar angulo: {e}")
             await query.message.reply_text(f"Erro ao processar angulo: {str(e)[:100]}")
+        return
+
+    # Aprovacao/refacao da copy (Agente 3)
+    if data in ("copy_approve", "copy_redo"):
+        if data == "copy_approve":
+            await query.message.reply_text(
+                "Copy aprovada! Passando para o Designer...\n(Isso pode levar 3-5 minutos)"
+            )
+        else:
+            await query.message.reply_text("Refazendo a copy... Aguarde.")
+        set_copy_decision(data.replace("copy_", ""))
         return
 
 
