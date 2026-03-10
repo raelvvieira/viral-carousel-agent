@@ -1,301 +1,371 @@
 """
-SCHEDULER - WAVY AGENTS
+SCHEDULER   WAVY AGENTS
+Conecta os 4 agentes e agenda execu  o autom tica
+3x por semana (segunda, quarta e sexta  s 8h).
+Tamb m aceita comandos manuais via Telegram.
 """
 
 import os
 import asyncio
 import logging
-import traceback
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from telegram import Bot, Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
+# Importa os agentes
 from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_angulo_escolhido
-from agent3_copywriter import run_copywriter, set_copy_decision
+from agent2_strategist import run_strategist, set_template_escolhido
+from agent3_copywriter import run_copywriter
 from agent4_designer import run_designer
 
+#     CONFIGURA  ES                                                
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%d/%m/%Y %H:%M:%S")
+#     LOGS                                                         
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%d/%m/%Y %H:%M:%S"
+)
 log = logging.getLogger("wavy-scheduler")
 
+# Controle de estado global
 _pipeline_running = False
-_shown_trend_titles = []
-_current_trends_data = {}
-_current_trend_index = 0
+
+# Guarda os t tulos j  mostrados na sess o atual (acumula a cada "buscar outros")
+_shown_trend_titles: list[str] = []
+
+# Guarda o resultado atual do Scout para o Agente 2 usar
+_current_trends_data: dict = {}
+
+# Estado de escolha de template
+_pending_copy_result: dict = {}
+_template_event: asyncio.Event = None
 
 
-async def notify(bot, text):
-    log.info(text.replace("*","").replace("_",""))
-    try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
-    except Exception as e:
-        log.error(f"Erro Telegram: {e}")
+#     ENVIAR TRENDS COM BOT ES                                     
 
-
-async def send_trends_to_telegram(bot, trends_data):
+async def send_trends_to_telegram(bot: Bot, trends_data: dict):
+    """
+    Envia as 5 trends pro Telegram com bot es numerados para escolha
+    e bot o para buscar outros temas.
+    """
     global _current_trends_data
     _current_trends_data = trends_data
+
     trends = trends_data.get("trends", [])
     if not trends:
-        await notify(bot, "Nenhuma trend encontrada. Tente novamente.")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="   Nenhuma trend encontrada. Tente novamente."
+        )
         return
 
-    emojis = ["1", "2", "3", "4", "5"]
-    texto = "*Top 5 trends de hoje:*\n\n"
+    # Monta mensagem com as 5 trends
+    texto = "  *Top 5 trends de hoje:*\n\n"
+    emojis = ["1  ", "2  ", "3  ", "4  ", "5  "]
     for i, trend in enumerate(trends):
-        score = trend.get("score_viralidade", 0)
-        texto += f"{emojis[i]}. *{trend['titulo']}*\n"
-        texto += f"   {trend['topico']} - {score}/100\n"
-        texto += f"   _{trend['descricao'][:100]}_\n\n"
-    texto += "Escolha um tema ou busque outros:"
+        texto += (
+            f"{emojis[i]} *{trend['titulo']}*\n"
+            f"  {trend['topico']}     {trend['score_viralidade']}/100\n"
+            f"_{trend['descricao']}_\n\n"
+        )
 
-    botoes = [InlineKeyboardButton(emojis[i], callback_data=f"trend_{i}") for i in range(len(trends))]
-    keyboard = InlineKeyboardMarkup([botoes, [InlineKeyboardButton("Buscar outros temas", callback_data="scout_retry")]])
-    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=texto, parse_mode="Markdown", reply_markup=keyboard)
+    # Bot es num ricos para escolher a trend
+    botoes_escolha = [
+        InlineKeyboardButton(emojis[i], callback_data=f"trend_{i}")
+        for i in range(len(trends))
+    ]
+
+    # Bot o para buscar outros temas (linha separada)
+    botao_outros = InlineKeyboardButton("  Buscar outros temas", callback_data="scout_retry")
+
+    keyboard = InlineKeyboardMarkup([
+        botoes_escolha,
+        [botao_outros]
+    ])
+
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=texto,
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
 
 
-async def run_scout_step(bot, retry=False):
+#     PIPELINE COMPLETO                                            
+
+async def run_full_pipeline(retry: bool = False):
+    """
+    Executa o pipeline completo dos 4 agentes em sequ ncia.
+    Se retry=True, o Agente 2 em diante j  foi iniciado pelo callback  
+    este m todo s  roda o Scout e envia os temas.
+    """
     global _pipeline_running, _shown_trend_titles
+
+    if _pipeline_running:
+        log.warning("Pipeline j  est  rodando, ignorando nova chamada.")
+        return
+
     _pipeline_running = True
-    now = datetime.now().strftime("%d/%m/%Y as %H:%M")
+    bot = Bot(token=TELEGRAM_TOKEN)
+    now = datetime.now().strftime("%d/%m/%Y  s %H:%M")
+
+    log.info("  Pipeline iniciado")
+
     try:
         if not retry:
+            # Primeira execu  o: reseta os temas vistos
             _shown_trend_titles = []
-            await notify(bot,
-                f"*Wavy Content Bot iniciado!*\n"
-                f"Data: {now}\n\n"
-                f"*Agente 1 - Scout*\n"
-                f"Conectando nas fontes RSS e Reddit..."
-            )
-        else:
-            await notify(bot,
-                f"*Buscando outros temas...*\n\n"
-                f"*Agente 1 - Scout*\n"
-                f"Procurando tendencias diferentes das {len(_shown_trend_titles)} ja mostradas..."
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=f"  *Wavy Content Bot iniciado!*\n  {now}\n\n  Buscando tend ncias...",
+                parse_mode="Markdown"
             )
 
+        #    AGENTE 1   Scout   
+        log.info("Agente 1   Scout")
         trends_data = await run_scout(excluded_titles=_shown_trend_titles if _shown_trend_titles else None)
 
         if not trends_data.get("trends"):
-            await notify(bot, "Nenhuma trend encontrada hoje. Tente novamente mais tarde.")
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text="   Nenhuma trend encontrada hoje. Tente novamente mais tarde."
+            )
             return
 
-        count = len(trends_data.get("trends", []))
-        await notify(bot, f"*Scout concluido!*\n{count} tendencias encontradas\n\nPreparando lista para sua escolha...")
-
+        # Acumula os t tulos mostrados para evitar repeti  o em futuras buscas
         for trend in trends_data.get("trends", []):
             titulo = trend.get("titulo", "")
             if titulo and titulo not in _shown_trend_titles:
                 _shown_trend_titles.append(titulo)
 
+        # Envia as trends com bot es (escolha + buscar outros)
         await send_trends_to_telegram(bot, trends_data)
 
+        # Agente 2 em diante s  roda quando o usu rio escolher uma trend
+        # (via callback_query handler)
+
     except Exception as e:
-        err = traceback.format_exc()
-        log.error(f"Erro Scout: {err}")
-        await notify(bot, f"*Erro no Agente 1 - Scout*\n\n`{str(e)[:300]}`\n\nVerifique os logs no Railway.")
+        log.error(f"  Erro no pipeline: {e}")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=f"  *Erro no pipeline*\n\n`{str(e)[:200]}`\n\nVerifique os logs no Railway.",
+            parse_mode="Markdown"
+        )
     finally:
         _pipeline_running = False
 
 
-async def run_pipeline_from_trend(bot, trend_index):
-    """Agentes 2, 3 e 4 a partir da trend selecionada."""
-    global _pipeline_running, _current_trends_data, _current_trend_index
+async def run_pipeline_from_trend(trend_index: int):
+    """Continua o pipeline a partir da trend escolhida (Agentes 2, 3 e 4)."""
+    global _pipeline_running, _current_trends_data
+
     _pipeline_running = True
-    _current_trend_index = trend_index
-
-    trends = _current_trends_data.get("trends", [])
-    if trend_index >= len(trends):
-        await notify(bot, "Trend nao encontrada. Rode /rodar novamente.")
-        _pipeline_running = False
-        return
-
-    trend = trends[trend_index]
+    bot = Bot(token=TELEGRAM_TOKEN)
 
     try:
-        #    AGENTE 2                                              
-        await notify(bot,
-            f"*Agente 2 - Estrategista*\n\n"
-            f"Tema: *{trend['titulo']}*\n\n"
-            f"Gerando 3 angulos diferentes para o carrossel...\n"
-            f"_(Aguarde, isso leva alguns segundos)_"
+        #    AGENTE 2   Estrategista   
+        # (inclui escolha de template e gera  o de  ngulos alinhados ao template)
+        log.info("Agente 2   Estrategista")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="Agente 2 - Estrategista\n\nEscolha o template visual do carrossel...",
         )
-
         final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
-
         if not final_choice:
-            await notify(bot, "*Estrategista falhou ou timeout.*\n\nTente selecionar outro tema com /rodar.")
             return
 
-        angulo_titulo = final_choice.get("angulo", {}).get("titulo", "")
-        await notify(bot,
-            f"*Estrategista concluido!*\n\n"
-            f"Angulo escolhido:\n_{angulo_titulo}_\n\n"
-            f"Passando para o Copywriter..."
+        template = final_choice.get("template", "A")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=f"Template {template} escolhido! Passando para o Copywriter...",
         )
 
-        #    AGENTE 3                                              
-        await notify(bot,
-            f"*Agente 3 - Copywriter*\n\n"
-            f"Pesquisando dados reais sobre o tema na web...\n"
-            f"Gerando copy completa para os 10 slides...\n\n"
-            f"_(Isso pode levar 1-2 minutos)_"
+        # AGENTE 3 - Copywriter
+        log.info("Agente 3 - Copywriter")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="Agente 3 - Copywriter\n\nPesquisando dados reais sobre o tema na web...\nGerando copy completa para os 10 slides...\n\n(Isso pode levar 1-2 minutos)",
         )
-
         copy_result = await run_copywriter(final_choice)
-
         if not copy_result:
-            await notify(bot, "*Copywriter falhou.*\n\nVerifique os logs no Railway.")
             return
 
-        slides_count = len(copy_result.get("copy", {}).get("slides", []))
-        await notify(bot,
-            f"*Copywriter concluido!*\n\n"
-            f"{slides_count} slides escritos\n\n"
-            f"Passando para o Designer..."
+        # AGENTE 4 - Designer
+        log.info(f"Agente 4 - Designer (template {copy_result.get('template', 'A')})")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="Agente 4 - Designer\n\nGerando imagens no Freepik...\n(3-5 minutos)",
         )
+        drive_links = await run_designer(copy_result)
 
-        #    AGENTE 4                                              
-        await notify(bot,
-            f"*Agente 4 - Designer*\n\n"
-            f"Gerando imagens no Freepik...\n"
-            f"Renderizando slides em PNG 1080x1350px...\n\n"
-            f"_(Isso pode levar 3-5 minutos)_"
-        )
-
-        png_paths = await run_designer(copy_result)
-
-        await notify(bot,
-            f"*Pipeline concluido com sucesso!*\n\n"
-            f"{len(png_paths)} slides gerados e enviados acima!\n\n"
-            f"_Salve as imagens e poste no Instagram._"
-        )
-
-        log.info(f"Pipeline concluido! {len(png_paths)} slides.")
+        log.info(f"Pipeline concluido! {len(drive_links)} slides gerados.")
 
     except Exception as e:
-        err = traceback.format_exc()
-        log.error(f"Erro pipeline: {err}")
-        await notify(bot, f"*Erro no pipeline*\n\n`{str(e)[:300]}`\n\nVerifique os logs no Railway.")
+        log.error(f"  Erro no pipeline (trend): {e}")
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=f"  *Erro ao continuar pipeline*\n\n`{str(e)[:200]}`",
+            parse_mode="Markdown"
+        )
     finally:
         _pipeline_running = False
 
 
-async def handle_callback(update, context):
+#     CALLBACK: BOT ES INLINE                                      
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Trata cliques nos bot es inline (escolha de trend ou buscar outros)."""
     query = update.callback_query
     await query.answer()
+
     if query.message.chat.id != TELEGRAM_CHAT_ID:
         return
 
     data = query.data
-    bot  = context.bot
-    global _pipeline_running
 
-    #    Buscar outros temas   
+    #    Bot o: buscar outros temas   
     if data == "scout_retry":
+        global _pipeline_running
+        # Reseta o flag caso tenha ficado travado
         _pipeline_running = False
-        asyncio.create_task(run_scout_step(bot, retry=True))
+
+        await query.message.reply_text(
+            "  *Buscando outros temas...*\n\n"
+            "  Aguarde, estou procurando tend ncias diferentes!",
+            parse_mode="Markdown"
+        )
+        asyncio.create_task(run_full_pipeline(retry=True))
         return
 
-    #    Escolha de trend   
+    #    Bot o: escolha de trend (trend_0 a trend_4)   
     if data.startswith("trend_"):
         if _pipeline_running:
-            await query.message.reply_text("Aguarde, o sistema ainda esta processando.")
+            await query.message.reply_text("   Aguarde, o sistema ainda est  processando.")
             return
+
         index = int(data.split("_")[1])
-        asyncio.create_task(run_pipeline_from_trend(bot, index))
-        return
+        trends = _current_trends_data.get("trends", [])
 
-    #    Escolha de angulo (chamado pelo Agente 2)   
-    if data.startswith("angulo_"):
-        import json
-        try:
-            with open("/tmp/angles_data.json", "r", encoding="utf-8") as f:
-                angles_data = json.load(f)
-            angulos = angles_data.get("angulos", [])
-            index = int(data.split("_")[1])
-            if index < len(angulos):
-                angulo = angulos[index]
-                await query.message.reply_text(
-                    f"*Angulo aprovado!*\n\n"
-                    f"_{angulo['titulo']}_\n\n"
-                    f"Passando para o Copywriter...",
-                    parse_mode="Markdown"
-                )
-                set_angulo_escolhido(angulo)
-            else:
-                await query.message.reply_text("Angulo nao encontrado. Tente novamente.")
-        except Exception as e:
-            log.error(f"Erro ao processar angulo: {e}")
-            await query.message.reply_text(f"Erro ao processar angulo: {str(e)[:100]}")
-        return
+        if index >= len(trends):
+            await query.message.reply_text("  Trend n o encontrada.")
+            return
 
-    # Aprovacao/refacao da copy (Agente 3)
-    if data in ("copy_approve", "copy_redo"):
-        if data == "copy_approve":
-            await query.message.reply_text(
-                "Copy aprovada! Passando para o Designer...\n(Isso pode levar 3-5 minutos)"
-            )
-        else:
-            await query.message.reply_text("Refazendo a copy... Aguarde.")
-        set_copy_decision(data.replace("copy_", ""))
+        trend = trends[index]
+        emojis = ["1  ", "2  ", "3  ", "4  ", "5  "]
+
+        await query.message.reply_text(
+            f"  *Trend selecionada:*\n\n"
+            f"{emojis[index]} *{trend['titulo']}*\n\n"
+            f"  Aguarde, vou pedir o template primeiro...",
+            parse_mode="Markdown"
+        )
+
+        asyncio.create_task(run_pipeline_from_trend(index))
+
+    # -- Botao: escolha de template (A, B ou C) --
+    if data.startswith("template_"):
+        chosen = data.split("_")[1]  # "A", "B" ou "C"
+        template_nomes = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
+        nome = template_nomes.get(chosen, chosen)
+        # Notifica o Agent2 que o template foi escolhido
+        set_template_escolhido(chosen)
+        await query.message.reply_text(
+            f"Template {chosen} - {nome} selecionado! Gerando angulos alinhados ao estilo..."
+        )
         return
 
 
-async def cmd_rodar(update, context):
+#     COMANDOS DO TELEGRAM                                         
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
+
+    scheduler = context.bot_data.get("scheduler")
+    job = scheduler.get_job("wavy_pipeline") if scheduler else None
+    proxima = job.next_run_time.strftime("%d/%m/%Y  s %H:%M") if job else " "
+
+    await update.message.reply_text(
+        f"  *Wavy Content Bot*\n\n"
+        f"Comandos dispon veis:\n\n"
+        f"   /rodar   Executa o pipeline agora\n"
+        f"  /status   Ver status do sistema\n"
+        f"  /ajuda   Ver todos os comandos\n\n"
+        f"  Pr xima execu  o autom tica:\n*{proxima}*",
+        parse_mode="Markdown"
+    )
+
+
+async def cmd_rodar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
+        return
+
     if _pipeline_running:
-        await update.message.reply_text("Pipeline ja esta rodando! Aguarde terminar.")
+        await update.message.reply_text("   O pipeline j  est  rodando! Aguarde terminar.")
         return
-    await update.message.reply_text("Iniciando pipeline...\nVoce recebera atualizacoes a cada etapa!")
-    asyncio.create_task(run_scout_step(context.bot, retry=False))
+
+    await update.message.reply_text(
+        "   *Iniciando pipeline manualmente...*\n\n"
+        "Voc  receber  as atualiza  es aqui mesmo!",
+        parse_mode="Markdown"
+    )
+
+    asyncio.create_task(run_full_pipeline())
 
 
-async def cmd_status(update, context):
+async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
+
     scheduler = context.bot_data.get("scheduler")
     job = scheduler.get_job("wavy_pipeline") if scheduler else None
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M") if job else "-"
-    status = "Rodando agora" if _pipeline_running else "Aguardando"
+    proxima = job.next_run_time.strftime("%d/%m/%Y  s %H:%M") if job else " "
+    status_pipeline = "  Rodando agora" if _pipeline_running else "  Aguardando"
+    temas_vistos = len(_shown_trend_titles)
+
     await update.message.reply_text(
-        f"Status do Sistema\n\nBot: Online\nPipeline: {status}\nProxima execucao: {proxima}\nAgenda: Seg, Qua e Sex as 8h\nTemas vistos na sessao: {len(_shown_trend_titles)}",
-        parse_mode=None
+        f"  *Status do Sistema*\n\n"
+        f"  Bot: Online\n"
+        f"   Pipeline: {status_pipeline}\n"
+        f"  Pr xima execu  o: *{proxima}*\n"
+        f"   Agenda: Seg, Qua e Sex  s 8h\n"
+        f"  Temas vistos nesta sess o: *{temas_vistos}*",
+        parse_mode="Markdown"
     )
 
 
-async def cmd_ajuda(update, context):
+async def cmd_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
+
     await update.message.reply_text(
-        "/rodar - Executar pipeline\n/status - Status do sistema\n/ajuda - Esta mensagem\n\nPipeline automatico: seg, qua e sex as 8h",
-        parse_mode=None
+        "  *Comandos dispon veis*\n\n"
+        "   /rodar   Executa o pipeline agora\n"
+        "  /status   Status do sistema\n"
+        "  /start   Mensagem de boas-vindas\n"
+        "  /ajuda   Esta mensagem\n\n"
+        "_O pipeline roda automaticamente\nseg, qua e sex  s 8h._",
+        parse_mode="Markdown"
     )
 
 
-async def cmd_start(update, context):
-    if update.effective_chat.id != TELEGRAM_CHAT_ID:
-        return
-    scheduler = context.bot_data.get("scheduler")
-    job = scheduler.get_job("wavy_pipeline") if scheduler else None
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M") if job else "-"
-    await update.message.reply_text(
-        f"Wavy Content Bot\n\n/rodar - Executar pipeline\n/status - Status\n/ajuda - Ajuda\n\nProxima execucao automatica: {proxima}",
-        parse_mode=None
-    )
-
+#     SCHEDULER                                                    
 
 async def main():
     scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
     scheduler.add_job(
-        lambda: asyncio.create_task(run_scout_step(Bot(token=TELEGRAM_TOKEN))),
-        trigger=CronTrigger(day_of_week="mon,wed,fri", hour=8, minute=0, timezone="America/Sao_Paulo"),
+        run_full_pipeline,
+        trigger=CronTrigger(
+            day_of_week="mon,wed,fri",
+            hour=8,
+            minute=0,
+            timezone="America/Sao_Paulo"
+        ),
         id="wavy_pipeline",
         name="Wavy Content Pipeline",
         replace_existing=True
@@ -304,10 +374,14 @@ async def main():
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.bot_data["scheduler"] = scheduler
+
+    # Comandos
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("rodar",  cmd_rodar))
     app.add_handler(CommandHandler("status", cmd_status))
     app.add_handler(CommandHandler("ajuda",  cmd_ajuda))
+
+    # Callbacks dos bot es inline
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     await app.bot.set_my_commands([
@@ -320,14 +394,21 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
-    job = scheduler.get_job("wavy_pipeline")
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M")
-    log.info(f"Sistema online - proxima execucao: {proxima}")
+    job     = scheduler.get_job("wavy_pipeline")
+    proxima = job.next_run_time.strftime("%d/%m/%Y  s %H:%M")
+    log.info(f"  Sistema online   pr xima execu  o: {proxima}")
 
     await app.bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text=f"Wavy Content Bot online!\nProxima execucao: {proxima}\n\n/rodar para executar agora",
-        parse_mode=None
+        text=(
+            f"  *Wavy Content Bot online!*\n\n"
+            f"  Sistema iniciado com sucesso\n"
+            f"  Pr xima execu  o: *{proxima}*\n\n"
+            f"   Para rodar agora: /rodar\n"
+            f"  Para ver status: /status\n\n"
+            f"_Rodando automaticamente seg, qua e sex  s 8h_"
+        ),
+        parse_mode="Markdown"
     )
 
     while True:
@@ -336,6 +417,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-# Alias para compatibilidade com o Start Command do Railway
-run_full_pipeline = main
