@@ -34,42 +34,87 @@ def set_copy_decision(decision: str):
     _aguardando_copy.set()
 
 
-COPY_STRATEGY = """
-ESTRATEGIA DE COPY - CARROSSEL (Estilo Editorial Wavy)
-
-REGRAS ABSOLUTAS:
+COPY_STRATEGY_BASE = """
+REGRAS ABSOLUTAS DE ESCRITA (valem para todos os templates):
 
 CAPITALIZACAO:
 - Apenas primeira letra da frase em maiusculo. NUNCA title case.
-- ERRADO: "O Mercado Esta Mudando Rapido"
-- CORRETO: "O mercado esta mudando rapido"
-
-RITMO:
-- Padrao ouro: 2 frases curtas (socos) + 1 frase longa (ancoragem)
-- Exemplo: "Nao e ruido. E fadiga estrutural. A geracao que cresceu online esta cansada de gamificar afeto."
-- NUNCA 4+ frases curtas seguidas
 
 VOLUME:
 - Titulo: 4 a 7 palavras
 - Corpo: maximo 35-40 palavras por slide
+- Slide 1 (capa): corpo vazio "" - so titulo
 
-TOM:
-- Jornalistico-editorial. NUNCA coach motivacional.
-- Afirma fenomenos. Nao aconselha.
-- NUNCA: "voce precisa", "aprenda a", "dica", "passo a passo"
+CONTINUIDADE:
+- Cada slide termina com tensao que puxa pro proximo
+"""
 
-ESTRUTURA DOS 10 SLIDES:
-1. CAPA - pergunta ou afirmacao que para o scroll (manchete jornalistica)
-2. PROBLEMA - dado concreto + contextualizacao
-3. PROVA - amplificacao com evidencia
+COPY_STRATEGY_POR_TEMPLATE = {
+    "A": """
+TOM DO TEMPLATE A (Cinematico):
+- Jornalistico, denso, investigativo. Reportagem de revista de negocios.
+- Afirma fenomenos com peso. Usa dados e nomes de empresas reais.
+- Ritmo: 2 frases curtas (socos) + 1 frase longa (ancoragem)
+- NUNCA coach motivacional. NUNCA "aprenda a", "dica", "passo a passo".
+
+ESTRUTURA:
+1. CAPA - manchete forte, factual, provoca curiosidade
+2. CONTEXTO - dado concreto + contextualizacao de mercado
+3. PROVA - amplificacao com evidencia real
 4. DIAGNOSTICO - causa raiz, frase curta e precisa
 5. VIRADA - alternativa/contraponto com dado
-6. MECANISMO - por que funciona (insight psicologico)
-7. APROFUNDAMENTO - camada extra, nova perspectiva
-8. PROVA CIENTIFICA - sem imagem, ancora logica/cientifica
-9. CONCLUSAO FILOSOFICA - fundo escuro, verdade maior
-10. CTA - conversacional, nunca imperativo agressivo
+6. MECANISMO - como funciona na pratica
+7. APROFUNDAMENTO - nova perspectiva, camada extra
+8. PROVA CIENTIFICA - sem imagem, ancora logica
+9. CONCLUSAO - verdade maior, peso jornalistico
+10. CTA - conversacional, nao agressivo
+""",
+    "B": """
+TOM DO TEMPLATE B (Feed Claro):
+- Acessivel, didatico, proximo. Como um especialista amigo explicando.
+- Linguagem direta e pratica. Cada slide = uma ideia clara e aplicavel.
+- Ritmo: frases medias, fluidas. Pode usar listas mentais (sem bullet literal).
+- Conectado ao cotidiano. Usa exemplos do dia a dia de quem faz marketing/negocios.
+
+ESTRUTURA:
+1. CAPA - afirmacao que quebra crenca comum
+2. PROBLEMA - o que a maioria faz de errado
+3. POR QUE - a razao real por tras do problema
+4. DADOS - numeros que provam o problema
+5. VIRADA - o que funciona de verdade
+6. COMO - o mecanismo pratico
+7. EXEMPLO - case ou situacao real
+8. PROVA - sem imagem, dado que confirma
+9. INSIGHT - a sacada que muda a perspectiva
+10. CTA - convite natural, proximo, sem pressao
+""",
+    "C": """
+TOM DO TEMPLATE C (Editorial Escuro):
+- Filosofico, provocativo, denso. Verdades que incomodam.
+- Frases curtas com peso. Cada frase deve cortar.
+- Ritmo: frases curtas e medias. NUNCA longas demais. Silencio entre ideias.
+- Sem explicacoes em excesso. A frase faz o trabalho sozinha.
+- Pode ser duro, direto, sem suavizar.
+
+ESTRUTURA:
+1. CAPA - afirmacao que provoca ou assusta
+2. DIAGNOSTICO - a raiz do problema em poucas palavras
+3. CONTRAINTUITIVO - o que todos acreditam que esta errado
+4. EVIDENCIA - dado ou caso que prova
+5. VIRADA - a mudanca de perspectiva
+6. MECANISMO - por que a maioria nao ve
+7. APROFUNDAMENTO - o custo de ignorar isso
+8. PROVA - sem imagem, a ancora logica
+9. VERDADE - a conclusao que pesa
+10. CTA - um convite simples, quase sussurrado
 """
+}
+
+
+def get_copy_strategy(template: str) -> str:
+    base = COPY_STRATEGY_BASE
+    especifico = COPY_STRATEGY_POR_TEMPLATE.get(template, COPY_STRATEGY_POR_TEMPLATE["A"])
+    return base + especifico
 
 
 def research_topic(trend: dict, angulo: dict) -> str:
@@ -102,8 +147,8 @@ Retorne apenas os dados mais relevantes em formato de lista. Sem analise, so os 
         return ""
 
 
-def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
-    """Gera a copy completa dos 10 slides."""
+def generate_copy_with_claude(trend: dict, angulo: dict, template: str = "A") -> dict:
+    """Gera a copy completa dos 10 slides com tom alinhado ao template escolhido."""
     import time
 
     print("   Pesquisando dados reais...")
@@ -129,6 +174,11 @@ def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
     except Exception:
         pass
 
+    # Pega estrategia de copy do template escolhido
+    copy_strategy = get_copy_strategy(template)
+    template_nomes = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
+    template_nome = template_nomes.get(template, "Cinematico")
+
     # Retry com backoff em caso de rate limit
     for tentativa in range(3):
         try:
@@ -136,11 +186,12 @@ def generate_copy_with_claude(trend: dict, angulo: dict) -> dict:
                 model="claude-sonnet-4-6",
                 max_tokens=3000,
                 messages=[{"role": "user", "content": f"""Voce e o Copywriter da Wavy - agencia de marketing digital brasileira.
-Estilo: jornalistico-editorial, cinematografico, inteligente. NUNCA coach motivacional.
-Referencia: Leo Baltazar, Caio Carneiro.
-Publico: empreendedores e gestores de marketing digital brasileiros.
+Publico: empreendedores, donos de negocio e gestores de marketing brasileiros.
 
-{COPY_STRATEGY}
+TEMPLATE VISUAL: {template} - {template_nome}
+A copy deve ser escrita com o tom e estilo exato deste template.
+
+{copy_strategy}
 
 {dados_section}
 
@@ -262,6 +313,10 @@ async def run_copywriter(final_choice: dict) -> dict:
     print(f"Trend: {trend.get('titulo', '')}")
     print(f"Angulo: {angulo.get('titulo', '')}")
 
+    template = final_choice.get("template", "A")
+    template_nomes = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
+    print(f"Template: {template} - {template_nomes.get(template, 'A')}")
+
     copy_data = None
     attempts  = 0
 
@@ -270,7 +325,7 @@ async def run_copywriter(final_choice: dict) -> dict:
         reset_copywriter()
 
         print(f"Gerando copy (tentativa {attempts})...")
-        copy_data = generate_copy_with_claude(trend, angulo)
+        copy_data = generate_copy_with_claude(trend, angulo, template)
 
         if not copy_data or not copy_data.get("slides"):
             print("Copy vazia, tentando novamente...")
@@ -295,10 +350,11 @@ async def run_copywriter(final_choice: dict) -> dict:
             print("Refazendo copy...")
 
     final_output = {
-        "trend": trend,
-        "angulo": angulo,
-        "copy": copy_data,
-        "formato": angulo.get("formato", "carrossel")
+        "trend":    trend,
+        "angulo":   angulo,
+        "copy":     copy_data,
+        "template": template,
+        "formato":  angulo.get("formato", "carrossel")
     }
 
     with open("/tmp/copy_result.json", "w", encoding="utf-8") as f:
