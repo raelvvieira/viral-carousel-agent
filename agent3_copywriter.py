@@ -194,11 +194,8 @@ TREND:
 - Descricao: {trend['descricao']}
 - Topico: {trend['topico']}
 
-ANGULO ESCOLHIDO:
-- Titulo: {angulo['titulo']}
-- Hook: {angulo['hook']}
-- Emocao dominante: {angulo['emocao']}
-- Perfil alvo: {angulo['perfil_alvo']}
+ANGULO/PERSPECTIVA:
+{angulo.get('titulo', '') or 'Escolha o melhor angulo para este tema e template'}
 
 {inspiracoes_txt}
 

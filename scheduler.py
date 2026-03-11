@@ -7,7 +7,6 @@ e transmite progresso em tempo real via Telegram.
 import os
 import asyncio
 import logging
-import json
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -15,7 +14,7 @@ from telegram import Bot, Update, BotCommand, InlineKeyboardButton, InlineKeyboa
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_template_escolhido, set_angulo_escolhido
+from agent2_strategist import run_strategist, set_template_escolhido
 from agent3_copywriter import run_copywriter, set_copy_decision
 from agent4_designer import run_designer
 
@@ -139,16 +138,15 @@ async def run_pipeline_from_trend(trend_index: int):
         log.info("Agente 2 - Estrategista")
         final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
         if not final_choice:
-            await status(bot, "Nenhum angulo escolhido. Pipeline cancelado.")
+            await status(bot, "Nenhum template escolhido. Pipeline cancelado.")
             return
 
         template = final_choice.get("template", "A")
         angulo   = final_choice.get("angulo", {})
-        log.info(f"Template {template} | Angulo: {angulo.get('titulo','')}")
+        log.info(f"Template {template} | Angulo base: {angulo.get('titulo','')}")
 
         # --- AGENTE 3: COPY ---
         await status(bot,
-            f"Angulo escolhido:\n_{angulo.get('titulo','')}_ \n\n"
             f"Agente 3 - Copywriter\n"
             f"Pesquisando dados reais na web sobre o tema...\n"
             f"(pode levar ~1 min)"
@@ -239,27 +237,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nomes  = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
         set_template_escolhido(chosen)
         await query.message.reply_text(
-            f"Template {chosen} - {nomes.get(chosen, chosen)} selecionado!\n\nGerando angulos..."
+            f"Template {chosen} - {nomes.get(chosen, chosen)} selecionado!\n\nGerando copy dos slides..."
         )
-        return
-
-    # Escolha de angulo
-    elif data.startswith("angulo_"):
-        try:
-            with open("/tmp/angles_data.json", "r", encoding="utf-8") as f:
-                angles_data = json.load(f)
-            angulos = angles_data.get("angulos", [])
-            index   = int(data.split("_")[1])
-            if index < len(angulos):
-                angulo = angulos[index]
-                set_angulo_escolhido(angulo)
-                await query.message.reply_text(
-                    f"Angulo escolhido:\n*{angulo['titulo']}*\n\nIniciando pesquisa e copy...",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            log.error(f"Erro ao processar angulo: {e}")
-            await query.message.reply_text("Erro ao processar escolha do angulo.")
         return
 
     # Aprovacao de copy

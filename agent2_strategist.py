@@ -1,37 +1,26 @@
 """
 AGENTE 2 - ESTRATEGISTA
-Recebe a trend escolhida, pede escolha de template, gera 3 angulos alinhados com o tom
-do template, envia pro Telegram e aguarda escolha do angulo.
+Recebe a trend escolhida, pede escolha de template e retorna imediatamente
+com o template escolhido + angulo base do Scout (sem chamada ao Claude).
 
 Fluxo:
   1. Envia mensagem pedindo template (A / B / C)
   2. Aguarda usuario escolher
-  3. Gera 3 angulos com tom alinhado ao template escolhido
-  4. Envia angulos pro Telegram
-  5. Aguarda escolha do angulo
+  3. Retorna trend + template + angulo base (do Scout)
 """
 
 import os
-import json
 import asyncio
-from anthropic import Anthropic
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 TELEGRAM_TOKEN    = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID  = int(os.getenv("TELEGRAM_CHAT_ID"))
-
-client = Anthropic(api_key=ANTHROPIC_API_KEY)
-
-# Evento global para angulo - scheduler.py seta quando usuario clica
-_angulo_escolhido   = None
-_aguardando_angulo  = asyncio.Event()
 
 # Evento global para template - scheduler.py seta quando usuario clica
 _template_escolhido  = None
 _aguardando_template = asyncio.Event()
 
-# Descricao de cada template para o Claude
+# Descricao de cada template para o Copywriter
 TEMPLATE_DESCRICOES = {
     "A": {
         "nome": "Cinematico",
@@ -59,11 +48,8 @@ TEMPLATE_DESCRICOES = {
 
 def reset_strategist():
     """Reseta estado para nova execucao."""
-    global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
-    _angulo_escolhido   = None
+    global _template_escolhido, _aguardando_template
     _template_escolhido = None
-    # Limpa os eventos sem recriar - mantém a mesma referência
-    _aguardando_angulo.clear()
     _aguardando_template.clear()
 
 
@@ -72,13 +58,6 @@ def set_template_escolhido(template: str):
     global _template_escolhido
     _template_escolhido = template
     _aguardando_template.set()
-
-
-def set_angulo_escolhido(angulo: dict):
-    """Chamado pelo scheduler.py quando usuario clica em um angulo."""
-    global _angulo_escolhido
-    _angulo_escolhido = angulo
-    _aguardando_angulo.set()
 
 
 async def send_template_choice(trend: dict):
@@ -95,7 +74,7 @@ async def send_template_choice(trend: dict):
 
     texto = (
         f"Trend escolhida:\n*{titulo_safe}*\n\n"
-        f"Antes de gerar os angulos, escolha o *estilo visual* do carrossel.\n\n"
+        f"Escolha o *estilo visual* do carrossel:\n\n"
         f"  *Template A - Cinematico*\n"
         f"Fundo preto, imagem de fundo no slide 1, visual pesado\n"
         f"_Ideal para: noticias de mercado, cases de empresas_\n\n"
@@ -122,115 +101,8 @@ async def send_template_choice(trend: dict):
     )
 
 
-def generate_angles_with_claude(trend: dict, template: str) -> dict:
-    """Gera 3 angulos de conteudo alinhados com o tom do template escolhido."""
-    t = TEMPLATE_DESCRICOES.get(template, TEMPLATE_DESCRICOES["A"])
-
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1500,
-        messages=[{
-            "role": "user",
-            "content": f"""Voce e um estrategista de conteudo viral para Instagram.
-
-Trend identificada:
-- Titulo: {trend['titulo']}
-- Descricao: {trend['descricao']}
-- Topico: {trend['topico']}
-- Score de viralidade: {trend['score_viralidade']}/100
-
-Template visual escolhido: {template} - {t['nome']}
-Tom deste template: {t['tom']}
-Ideal para: {t['ideal_para']}
-Estilo de copy: {t['copy_style']}
-
-IMPORTANTE: Os 3 angulos gerados devem ser coerentes com o tom e estilo do template {template}.
-Nao gere angulos didaticos para o template C, nem angulos filosoficos para o template B.
-Cada angulo deve encaixar naturalmente no visual e tom do template escolhido.
-
-Gere 3 angulos DIFERENTES entre si, mas todos alinhados com o tom do template {template}.
-
-Retorne APENAS JSON valido (sem markdown, sem explicacoes):
-{{
-  "trend_titulo": "{trend['titulo']}",
-  "template": "{template}",
-  "angulos": [
-    {{
-      "numero": 1,
-      "titulo": "Titulo do angulo em portugues",
-      "formato": "carrossel",
-      "hook": "Frase de abertura impactante para o slide 1 (max 10 palavras)",
-      "emocao": "identificacao",
-      "descricao": "2-3 frases explicando a abordagem e por que vai viralizar",
-      "perfil_alvo": "Para quem e esse angulo"
-    }},
-    {{
-      "numero": 2,
-      "titulo": "Titulo do angulo 2",
-      "formato": "carrossel",
-      "hook": "Hook do angulo 2",
-      "emocao": "surpresa",
-      "descricao": "Descricao do angulo 2",
-      "perfil_alvo": "Perfil alvo 2"
-    }},
-    {{
-      "numero": 3,
-      "titulo": "Titulo do angulo 3",
-      "formato": "carrossel",
-      "hook": "Hook do angulo 3",
-      "emocao": "indignacao",
-      "descricao": "Descricao do angulo 3",
-      "perfil_alvo": "Perfil alvo 3"
-    }}
-  ]
-}}"""
-        }]
-    )
-
-    try:
-        text = response.content[0].text.strip()
-        if text.startswith("```"):
-            text = text.split("```")[1]
-            if text.startswith("json"):
-                text = text[4:]
-        return json.loads(text)
-    except Exception as e:
-        print(f"Erro ao parsear angulos: {e}")
-        return {"angulos": []}
-
-
-async def send_angles_to_telegram(trend: dict, angles_data: dict, template: str):
-    """Envia os 3 angulos pro Telegram com botoes de escolha."""
-    bot     = Bot(token=TELEGRAM_TOKEN)
-    angulos = angles_data.get("angulos", [])
-    t       = TEMPLATE_DESCRICOES.get(template, TEMPLATE_DESCRICOES["A"])
-
-    texto = f"*{t['emoji']} Template {template} - {t['nome']}*\n\n"
-    texto += f"3 angulos para:\n*{trend['titulo']}*\n\n"
-
-    for i, angulo in enumerate(angulos[:3]):
-        texto += f"{i+1}. *{angulo['titulo']}*\n"
-        texto += f"_Hook: {angulo['hook'][:80]}_\n"
-        texto += f"Tom: {angulo['emocao']} | Para: {angulo['perfil_alvo']}\n\n"
-
-    texto += "Qual angulo quer desenvolver?"
-
-    botoes = [
-        InlineKeyboardButton(f"{i+1} {angulo['titulo'][:35]}", callback_data=f"angulo_{i}")
-        for i, angulo in enumerate(angulos[:3])
-    ]
-    keyboard = InlineKeyboardMarkup([botoes])
-
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text=texto,
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
-
-
 async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
-    global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
+    global _template_escolhido, _aguardando_template
 
     # Reset ANTES de qualquer coisa - garante eventos limpos
     reset_strategist()
@@ -257,45 +129,20 @@ async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
     template = _template_escolhido or "A"
     print(f"Template escolhido: {template}")
 
-    # Gera angulos com o tom do template (em thread para nao bloquear o event loop)
-    print(f"Gerando angulos para template {template}...")
-    angles_data = await asyncio.to_thread(generate_angles_with_claude, trend, template)
-    angulos     = angles_data.get("angulos", [])
-
-    if not angulos:
-        print("Erro: nenhum angulo gerado")
-        return None
-
-    print(f"{len(angulos)} angulos gerados")
-
-    # Salva para o callback do scheduler
-    with open("/tmp/angles_data.json", "w", encoding="utf-8") as f:
-        json.dump({"trend": trend, "angulos": angulos, "template": template}, f, ensure_ascii=False, indent=2)
-
-    # Envia angulos pro Telegram
-    await send_angles_to_telegram(trend, angles_data, template)
-
-    print("Aguardando escolha do angulo no Telegram...")
-    try:
-        await asyncio.wait_for(_aguardando_angulo.wait(), timeout=600)
-    except asyncio.TimeoutError:
-        print("Timeout: nenhum angulo escolhido em 10 minutos")
-        return None
-
-    if not _angulo_escolhido:
-        return None
-
-    print(f"Angulo escolhido: {_angulo_escolhido['titulo']}")
+    # Usa o primeiro angulo sugerido pelo Scout como base (sem chamar Claude)
+    angulos_sugeridos = trend.get("angulos_sugeridos", [])
+    angulo_base = angulos_sugeridos[0] if angulos_sugeridos else trend.get("titulo", "")
 
     return {
         "trend":    trend,
-        "angulo":   _angulo_escolhido,
         "template": template,
+        "angulo":   {"titulo": angulo_base, "hook": "", "emocao": "", "perfil_alvo": ""},
         "formato":  "carrossel"
     }
 
 
 if __name__ == "__main__":
+    import json
     try:
         with open("/tmp/trends_result.json", "r", encoding="utf-8") as f:
             trends = json.load(f)
@@ -305,4 +152,4 @@ if __name__ == "__main__":
 
     result = asyncio.run(run_strategist(trends, selected_index=0))
     if result:
-        print(f"Template: {result['template']} | Angulo: {result['angulo']['titulo']}")
+        print(f"Template: {result['template']} | Angulo base: {result['angulo']['titulo']}")
