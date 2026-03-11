@@ -176,8 +176,8 @@ async def collect_all_content() -> list[dict]:
 def analyze_trends_with_claude(raw_content: list[dict], excluded_titles: list[str] = None) -> dict:
     """Analisa o conteudo coletado e retorna top 5 trends para o publico da Wavy."""
 
-    # Prioriza os mais engajados + pega variedade de fontes
-    top_content = raw_content[:100]
+    # Pega os 40 mais engajados - suficiente para 5 trends, evita truncar JSON
+    top_content = raw_content[:40]
 
     content_summary = "\n".join([
         f"- [{item['source']}] {item['title']} (engajamento: {item.get('score', 0) + item.get('comments', 0) * 2})"
@@ -199,7 +199,7 @@ Traga angulos completamente diferentes - outros topicos, outros problemas, outra
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2500,
+        max_tokens=4000,
         messages=[{
             "role": "user",
             "content": f"""Voce e um curador de conteudo viral especializado no mercado brasileiro de negocios e marketing digital.
