@@ -15,7 +15,7 @@ from telegram import Bot, Update, BotCommand, InlineKeyboardButton, InlineKeyboa
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_template_escolhido, set_angulo_escolhido, send_template_choice
+from agent2_strategist import run_strategist, set_template_escolhido, set_angulo_escolhido
 from agent3_copywriter import run_copywriter, set_copy_decision
 from agent4_designer import run_designer
 
@@ -134,30 +134,9 @@ async def run_pipeline_from_trend(trend_index: int):
     try:
         trend = _current_trends_data.get("trends", [])[trend_index]
 
-        # --- AGENTE 2: TEMPLATE ---
-        log.info("Agente 2 - Estrategista: aguardando template")
-        await send_template_choice(trend)
-        # (usuario clica no template -> set_template_escolhido -> agent2 continua)
-
-        await status(bot, "Aguardando escolha do template...")
-
-        # --- AGENTE 2: ANGULOS ---
-        # run_strategist aguarda template internamente, depois gera angulos
-        log.info("Agente 2 - Estrategista: aguardando angulo")
-
-        # Notifica que esta gerando angulos (apos template ser escolhido,
-        # o agent2 gera automaticamente - esse msg chega logo depois)
-        async def aguarda_e_notifica():
-            # Aguarda o template ser escolhido (evento interno do agent2)
-            from agent2_strategist import _aguardando_template
-            try:
-                await asyncio.wait_for(_aguardando_template.wait(), timeout=600)
-                await status(bot, "Template escolhido!\n\nGerando 3 angulos com Claude...")
-            except Exception:
-                pass
-
-        asyncio.create_task(aguarda_e_notifica())
-
+        # AGENTE 2 - run_strategist envia os botoes de template internamente
+        # (apos reset, garantindo ordem correta)
+        log.info("Agente 2 - Estrategista")
         final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
         if not final_choice:
             await status(bot, "Nenhum angulo escolhido. Pipeline cancelado.")
