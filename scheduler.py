@@ -207,7 +207,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         global _pipeline_running
         _pipeline_running = False
         await query.message.reply_text("Buscando outros temas...\nAguarde!")
-        asyncio.create_task(run_full_pipeline(retry=True))
+        context.application.create_task(run_full_pipeline(retry=True))
         return
 
     # Escolha de trend
@@ -230,7 +230,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Trend selecionada:\n*{trend['titulo']}*\n\nEscolha o template visual:",
             parse_mode="Markdown"
         )
-        asyncio.create_task(run_pipeline_from_trend(index))
+        context.application.create_task(run_pipeline_from_trend(index))
         return
 
     # Escolha de template
@@ -300,7 +300,7 @@ async def cmd_rodar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("O pipeline ja esta rodando! Aguarde terminar.")
         return
     await update.message.reply_text("Iniciando pipeline...")
-    asyncio.create_task(run_full_pipeline())
+    context.application.create_task(run_full_pipeline())
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -337,7 +337,7 @@ async def cmd_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- MAIN ---
 
-async def main():
+def main():
     scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
     scheduler.add_job(
         run_full_pipeline,
@@ -350,10 +350,38 @@ async def main():
         name="Wavy Content Pipeline",
         replace_existing=True
     )
-    scheduler.start()
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
-    app.bot_data["scheduler"] = scheduler
+    async def post_init(app: Application):
+        scheduler.start()
+        app.bot_data["scheduler"] = scheduler
+
+        await app.bot.set_my_commands([
+            BotCommand("rodar",  "Executar pipeline agora"),
+            BotCommand("status", "Ver status do sistema"),
+            BotCommand("ajuda",  "Ver todos os comandos"),
+        ])
+
+        job = scheduler.get_job("wavy_pipeline")
+        proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M")
+        log.info(f"Sistema online - proxima execucao: {proxima}")
+
+        await app.bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=(
+                f"*Wavy Content Bot online!*\n\n"
+                f"Proxima execucao automatica: *{proxima}*\n\n"
+                f"/rodar para executar agora\n"
+                f"/status para ver o status"
+            ),
+            parse_mode="Markdown"
+        )
+
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start",  cmd_start))
     app.add_handler(CommandHandler("rodar",  cmd_rodar))
@@ -361,38 +389,9 @@ async def main():
     app.add_handler(CommandHandler("ajuda",  cmd_ajuda))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    await app.bot.set_my_commands([
-        BotCommand("rodar",  "Executar pipeline agora"),
-        BotCommand("status", "Ver status do sistema"),
-        BotCommand("ajuda",  "Ver todos os comandos"),
-    ])
+    log.info("Iniciando bot com run_polling...")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    job = scheduler.get_job("wavy_pipeline")
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M")
-    log.info(f"Sistema online - proxima execucao: {proxima}")
-
-    bot = Bot(token=TELEGRAM_TOKEN)
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text=(
-            f"*Wavy Content Bot online!*\n\n"
-            f"Proxima execucao automatica: *{proxima}*\n\n"
-            f"/rodar para executar agora\n"
-            f"/status para ver o status"
-        ),
-        parse_mode="Markdown"
-    )
-
-    while True:
-        await asyncio.sleep(60)
-
-
-# Alias para Railway Custom Start Command
-run_full_pipeline_alias = main
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
