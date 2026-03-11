@@ -147,19 +147,17 @@ Retorne apenas os dados mais relevantes em formato de lista. Sem analise, so os 
         return ""
 
 
-def generate_copy_with_claude(trend: dict, angulo: dict, template: str = "A") -> dict:
+async def generate_copy_with_claude(trend: dict, angulo: dict, template: str = "A") -> dict:
     """Gera a copy completa dos 10 slides com tom alinhado ao template escolhido."""
-    import time
-
     print("   Pesquisando dados reais...")
-    dados_pesquisa = research_topic(trend, angulo)
+    dados_pesquisa = await asyncio.to_thread(research_topic, trend, angulo)
     dados_section = ""
     if dados_pesquisa:
         dados_section = f"\nDADOS REAIS PESQUISADOS (use como ancora de credibilidade):\n{dados_pesquisa}\n"
 
     # Aguarda 15s para evitar rate limit entre pesquisa e geracao da copy
     print("   Aguardando 15s para evitar rate limit...")
-    time.sleep(15)
+    await asyncio.sleep(15)
 
     # Carrega referencias de inspiracao
     inspiracoes_txt = ""
@@ -181,11 +179,7 @@ def generate_copy_with_claude(trend: dict, angulo: dict, template: str = "A") ->
 
     # Retry com backoff em caso de rate limit
     for tentativa in range(3):
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=3000,
-                messages=[{"role": "user", "content": f"""Voce e o Copywriter da Wavy - agencia de marketing digital brasileira.
+        prompt_content = f"""Voce e o Copywriter da Wavy - agencia de marketing digital brasileira.
 Publico: empreendedores, donos de negocio e gestores de marketing brasileiros.
 
 TEMPLATE VISUAL: {template} - {template_nome}
@@ -224,14 +218,20 @@ Retorne APENAS JSON valido neste formato:
   {{"slide": 1, "titulo_bold": "...", "corpo": "", "prompt_imagem": "..."}},
   {{"slide": 2, "titulo_bold": "...", "corpo": "...", "prompt_imagem": "..."}},
   ...
-]}}"""}]
+]}}"""
+        try:
+            response = await asyncio.to_thread(
+                client.messages.create,
+                model="claude-sonnet-4-6",
+                max_tokens=3000,
+                messages=[{"role": "user", "content": prompt_content}]
             )
             break  # sucesso, sai do retry
         except Exception as e:
             if "rate_limit" in str(e).lower() or "429" in str(e):
                 espera = 30 * (tentativa + 1)
                 print(f"   Rate limit! Aguardando {espera}s antes de tentar novamente...")
-                time.sleep(espera)
+                await asyncio.sleep(espera)
                 if tentativa == 2:
                     print("   Rate limit persistente, retornando vazio")
                     return {}
@@ -325,7 +325,7 @@ async def run_copywriter(final_choice: dict) -> dict:
         reset_copywriter()
 
         print(f"Gerando copy (tentativa {attempts})...")
-        copy_data = generate_copy_with_claude(trend, angulo, template)
+        copy_data = await generate_copy_with_claude(trend, angulo, template)
 
         if not copy_data or not copy_data.get("slides"):
             print("Copy vazia, tentando novamente...")
