@@ -24,7 +24,7 @@ _aguardando_copy = asyncio.Event()
 def reset_copywriter():
     global _copy_decision, _aguardando_copy
     _copy_decision = None
-    _aguardando_copy = asyncio.Event()
+    _aguardando_copy.clear()
 
 
 def set_copy_decision(decision: str):
