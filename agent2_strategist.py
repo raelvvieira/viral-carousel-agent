@@ -222,30 +222,23 @@ async def send_angles_to_telegram(trend: dict, angles_data: dict, template: str)
 
 
 async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
-    """
-    Funcao principal do Agente 2.
-    1. Pede escolha de template
-    2. Gera angulos alinhados com o template
-    3. Aguarda escolha do angulo
-    Retorna dict com 'trend', 'angulo', 'template' e 'formato'.
-    """
     global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
 
+    # Reset ANTES de qualquer coisa - garante eventos limpos
     reset_strategist()
 
     print("Agente 2 - Estrategista iniciado...")
 
     trends = trends_data.get("trends", [])
     if selected_index >= len(trends):
-        print(f"Indice {selected_index} invalido, usando 0")
         selected_index = 0
 
     trend = trends[selected_index]
-    print(f"Trend escolhida: {trend['titulo']}")
+    print(f"Trend: {trend['titulo']}")
 
-    # Os botoes de template ja foram enviados pelo scheduler antes desta chamada
-    # Apenas aguarda o usuario clicar
-    print("Aguardando escolha do template no Telegram...")
+    # Envia botoes de template APOS o reset (ordem correta)
+    await send_template_choice(trend)
+    print("Aguardando template...")
 
     try:
         await asyncio.wait_for(_aguardando_template.wait(), timeout=600)
