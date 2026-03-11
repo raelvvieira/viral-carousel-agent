@@ -243,8 +243,8 @@ async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
     trend = trends[selected_index]
     print(f"Trend escolhida: {trend['titulo']}")
 
-    # Pede escolha do template
-    await send_template_choice(trend)
+    # Os botoes de template ja foram enviados pelo scheduler antes desta chamada
+    # Apenas aguarda o usuario clicar
     print("Aguardando escolha do template no Telegram...")
 
     try:
