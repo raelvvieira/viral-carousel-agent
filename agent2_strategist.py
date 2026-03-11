@@ -74,16 +74,6 @@ async def send_template_choice(trend: dict):
 
     texto = (
         f"Trend escolhida:\n*{titulo_safe}*\n\n"
-        f"Escolha o *estilo visual* do carrossel:\n\n"
-        f"  *Template A - Cinematico*\n"
-        f"Fundo preto, imagem de fundo no slide 1, visual pesado\n"
-        f"_Ideal para: noticias de mercado, cases de empresas_\n\n"
-        f"   *Template B - Feed Claro*\n"
-        f"Fundo cinza claro, estilo post do Instagram, cards de imagem\n"
-        f"_Ideal para: dicas, estrategias, como fazer_\n\n"
-        f"  *Template C - Editorial Escuro*\n"
-        f"Fundo preto total, tipografia enorme, visual editorial\n"
-        f"_Ideal para: reflexoes, provocacoes, mentalidade_\n\n"
         f"Qual template quer usar?"
     )
 
