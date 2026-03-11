@@ -20,12 +20,24 @@ client = Anthropic(api_key=ANTHROPIC_API_KEY)
 _angulo_escolhido = None
 _aguardando_angulo = asyncio.Event()
 
+# Evento global - scheduler.py seta quando usuario clica no template
+_template_escolhido  = None
+_aguardando_template = asyncio.Event()
+
+TEMPLATE_DESCRICOES = {
+    "A": "Cinematico — jornalistico, denso, dados impactantes",
+    "B": "Feed Claro — acessivel, didatico, linguagem proxima",
+    "C": "Editorial Escuro — filosofico, provocativo, frases de impacto",
+}
+
 
 def reset_strategist():
     """Reseta estado para nova execucao."""
-    global _angulo_escolhido, _aguardando_angulo
-    _angulo_escolhido = None
+    global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
+    _angulo_escolhido  = None
     _aguardando_angulo = asyncio.Event()
+    _template_escolhido  = None
+    _aguardando_template = asyncio.Event()
 
 
 def set_angulo_escolhido(angulo: dict):
@@ -33,6 +45,34 @@ def set_angulo_escolhido(angulo: dict):
     global _angulo_escolhido
     _angulo_escolhido = angulo
     _aguardando_angulo.set()
+
+
+def set_template_escolhido(template: str):
+    """Chamado pelo scheduler.py quando usuario clica em um template."""
+    global _template_escolhido
+    _template_escolhido = template
+    _aguardando_template.set()
+
+
+async def send_template_choice(trend: dict, angulo: dict):
+    """Envia botoes de escolha de template apos o angulo ser selecionado."""
+    bot = Bot(token=TELEGRAM_TOKEN)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("A - Cinematico",       callback_data="template_A"),
+        InlineKeyboardButton("B - Feed Claro",       callback_data="template_B"),
+        InlineKeyboardButton("C - Editorial Escuro", callback_data="template_C"),
+    ]])
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=(
+            f"Angulo aprovado!\n\n"
+            f"Qual visual voce quer para o carrossel?\n\n"
+            f"A - Cinematico\nJornalistico, denso, dados impactantes\n\n"
+            f"B - Feed Claro\nAcessivel, didatico, linguagem proxima\n\n"
+            f"C - Editorial Escuro\nFilosofico, provocativo, frases de impacto"
+        ),
+        reply_markup=keyboard
+    )
 
 
 def generate_angles_with_claude(trend: dict) -> dict:
@@ -183,10 +223,23 @@ async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
 
     print(f"Angulo escolhido: {_angulo_escolhido['titulo']}")
 
+    # Pede escolha do template visual
+    await send_template_choice(trend, _angulo_escolhido)
+    print("Aguardando escolha do template no Telegram...")
+    try:
+        await asyncio.wait_for(_aguardando_template.wait(), timeout=600)
+    except asyncio.TimeoutError:
+        print("Timeout: nenhum template escolhido em 10 minutos, usando A")
+        _template_escolhido = "A"
+
+    template = _template_escolhido or "A"
+    print(f"Template escolhido: {template}")
+
     return {
-        "trend": trend,
-        "angulo": _angulo_escolhido,
-        "formato": "carrossel"
+        "trend":    trend,
+        "angulo":   _angulo_escolhido,
+        "template": template,
+        "formato":  "carrossel",
     }
 
 

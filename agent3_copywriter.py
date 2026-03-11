@@ -276,6 +276,11 @@ async def run_copywriter(final_choice: dict) -> dict:
             print("Copy vazia, tentando novamente...")
             continue
 
+        # Slide 1: usa sempre o titulo do angulo como manchete da capa
+        titulo_angulo = angulo.get("titulo", "")
+        if titulo_angulo and copy_data["slides"]:
+            copy_data["slides"][0]["titulo_bold"] = titulo_angulo
+
         print(f"Copy gerada: {len(copy_data.get('slides', []))} slides")
 
         # Envia pro Telegram

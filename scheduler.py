@@ -13,7 +13,7 @@ from telegram import Bot, Update, BotCommand, InlineKeyboardButton, InlineKeyboa
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_angulo_escolhido
+from agent2_strategist import run_strategist, set_angulo_escolhido, set_template_escolhido
 from agent3_copywriter import run_copywriter, set_copy_decision
 from agent4_designer import run_designer
 
@@ -233,6 +233,16 @@ async def handle_callback(update, context):
         except Exception as e:
             log.error(f"Erro ao processar angulo: {e}")
             await query.message.reply_text(f"Erro ao processar angulo: {str(e)[:100]}")
+        return
+
+    # Escolha de template visual (Agente 2)
+    if data.startswith("template_"):
+        template = data.split("_")[1]  # "A", "B" ou "C"
+        nomes = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
+        await query.message.reply_text(
+            f"Template {template} - {nomes.get(template, template)} selecionado!\n\nGerando copy dos slides..."
+        )
+        set_template_escolhido(template)
         return
 
     # Aprovacao/refacao da copy (Agente 3)
