@@ -60,10 +60,11 @@ TEMPLATE_DESCRICOES = {
 def reset_strategist():
     """Reseta estado para nova execucao."""
     global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
-    _angulo_escolhido    = None
-    _aguardando_angulo   = asyncio.Event()
-    _template_escolhido  = None
-    _aguardando_template = asyncio.Event()
+    _angulo_escolhido   = None
+    _template_escolhido = None
+    # Limpa os eventos sem recriar - mantém a mesma referência
+    _aguardando_angulo.clear()
+    _aguardando_template.clear()
 
 
 def set_template_escolhido(template: str):
