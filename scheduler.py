@@ -131,38 +131,40 @@ async def run_pipeline_from_trend(trend_index: int):
     bot = Bot(token=TELEGRAM_TOKEN)
 
     try:
-        trend = _current_trends_data.get("trends", [])[trend_index]
+        trends = _current_trends_data.get("trends", [])
+        trend = trends[trend_index]
+        log.info(f"Trend selecionada: {trend['titulo']}")
 
-        # AGENTE 2 - run_strategist envia os botoes de template internamente
-        # (apos reset, garantindo ordem correta)
-        log.info("Agente 2 - Estrategista")
+        # --- AGENTE 2: TEMPLATE ---
+        # run_strategist envia os botoes de template e aguarda clique
+        log.info("Agente 2 - Estrategista: aguardando escolha de template")
         final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
         if not final_choice:
             await status(bot, "Nenhum template escolhido. Pipeline cancelado.")
             return
 
         template = final_choice.get("template", "A")
-        angulo   = final_choice.get("angulo", {})
-        log.info(f"Template {template} | Angulo base: {angulo.get('titulo','')}")
+        nomes_template = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
+        log.info(f"Template escolhido: {template}")
 
         # --- AGENTE 3: COPY ---
         await status(bot,
-            f"Agente 3 - Copywriter\n"
-            f"Pesquisando dados reais na web sobre o tema...\n"
-            f"(pode levar ~1 min)"
+            f"Template {template} - {nomes_template.get(template)} selecionado!\n\n"
+            f"Pesquisando dados reais sobre o tema na web...\n"
+            f"(pode levar ~30 segundos)"
         )
-        log.info("Agente 3 - Copywriter: pesquisa")
+        log.info("Agente 3 - Copywriter: pesquisa web")
 
-        # Notifica quando a pesquisa termina e copy comeca
+        # Avisa quando pesquisa termina e copy comeca (~35s apos inicio)
         async def notifica_gerando_copy():
-            await asyncio.sleep(20)  # ~tempo da pesquisa web
-            await status(bot, "Pesquisa concluida!\n\nGerando copy dos 10 slides com Claude...\n(pode levar ~1 min)")
+            await asyncio.sleep(35)
+            await status(bot, "Pesquisa concluida!\n\nGerando copy dos 10 slides com Claude...\n(mais ~30 segundos)")
 
         asyncio.create_task(notifica_gerando_copy())
 
         copy_result = await run_copywriter(final_choice)
         if not copy_result:
-            await status(bot, "Erro ao gerar copy. Pipeline cancelado.")
+            await status(bot, "Erro ao gerar copy. Tente novamente com /rodar.")
             return
 
         slides_count = len(copy_result.get("copy", {}).get("slides", []))
@@ -170,21 +172,25 @@ async def run_pipeline_from_trend(trend_index: int):
 
         # --- AGENTE 4: DESIGNER ---
         await status(bot,
-            f"Copy aprovada! {slides_count} slides.\n\n"
-            f"Agente 4 - Designer\n"
-            f"Gerando imagens no Freepik...\n"
-            f"Slide a slide (3-5 min no total)"
+            f"Copy aprovada! {slides_count} slides prontos.\n\n"
+            f"Gerando imagens no Freepik e montando os slides...\n"
+            f"(pode levar 3-5 min)"
         )
         log.info(f"Agente 4 - Designer (template {template})")
 
         png_paths = await run_designer(copy_result)
 
-        await status(bot, f"Pipeline concluido!\n{len(png_paths)} slides gerados e enviados acima.")
+        await status(bot, f"Pronto! {len(png_paths)} slides gerados e enviados acima.")
         log.info(f"Pipeline concluido! {len(png_paths)} slides.")
 
+    except IndexError:
+        log.error(f"Trend index {trend_index} invalido")
+        await status(bot, "Erro: trend nao encontrada. Use /rodar para buscar novamente.")
     except Exception as e:
-        log.error(f"Erro no pipeline (trend {trend_index}): {e}")
-        await status(bot, f"Erro no pipeline:\n{str(e)[:300]}")
+        import traceback
+        tb = traceback.format_exc()
+        log.error(f"Erro no pipeline (trend {trend_index}): {tb}")
+        await status(bot, f"Erro no pipeline:\n{str(e)[:400]}\n\nUse /rodar para tentar novamente.")
     finally:
         _pipeline_running = False
 
@@ -214,6 +220,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Aguarde, o sistema ainda esta processando.")
             return
 
+        if not _current_trends_data.get("trends"):
+            await query.message.reply_text("Sessao expirada. Use /rodar para buscar novas trends.")
+            return
+
         index = int(data.split("_")[1])
         trends = _current_trends_data.get("trends", [])
 
@@ -221,13 +231,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Trend nao encontrada.")
             return
 
-        trend = trends[index]
         _pipeline_running = True
-
-        await query.message.reply_text(
-            f"Trend selecionada:\n*{trend['titulo']}*\n\nEscolha o template visual:",
-            parse_mode="Markdown"
-        )
         context.application.create_task(run_pipeline_from_trend(index))
         return
 
