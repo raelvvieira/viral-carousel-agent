@@ -16,7 +16,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 
 # Importa os agentes
 from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_template_escolhido
+from agent2_strategist import run_strategist, set_template_escolhido, send_template_choice
 from agent3_copywriter import run_copywriter
 from agent4_designer import run_designer
 
@@ -168,13 +168,11 @@ async def run_pipeline_from_trend(trend_index: int):
     bot = Bot(token=TELEGRAM_TOKEN)
 
     try:
-        #    AGENTE 2   Estrategista   
-        # (inclui escolha de template e gera  o de  ngulos alinhados ao template)
-        log.info("Agente 2   Estrategista")
-        await bot.send_message(
-            chat_id=TELEGRAM_CHAT_ID,
-            text="Agente 2 - Estrategista\n\nEscolha o template visual do carrossel...",
-        )
+        # AGENTE 2 - Estrategista
+        # Envia botoes de template IMEDIATAMENTE antes de qualquer processamento
+        log.info("Agente 2 - Estrategista")
+        trend = _current_trends_data.get("trends", [])[trend_index]
+        await send_template_choice(trend)
         final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
         if not final_choice:
             return
