@@ -85,8 +85,16 @@ async def send_template_choice(trend: dict):
     """Envia mensagem pedindo para o usuario escolher o template."""
     bot = Bot(token=TELEGRAM_TOKEN)
 
+    # Escapa caracteres especiais do Markdown v1 para evitar erro de parse
+    titulo_safe = (trend['titulo']
+                   .replace('\\', '\\\\')
+                   .replace('*', '\\*')
+                   .replace('_', '\\_')
+                   .replace('[', '\\[')
+                   .replace('`', '\\`'))
+
     texto = (
-        f"Trend escolhida:\n*{trend['titulo']}*\n\n"
+        f"Trend escolhida:\n*{titulo_safe}*\n\n"
         f"Antes de gerar os angulos, escolha o *estilo visual* do carrossel.\n\n"
         f"  *Template A - Cinematico*\n"
         f"Fundo preto, imagem de fundo no slide 1, visual pesado\n"
@@ -249,9 +257,9 @@ async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
     template = _template_escolhido or "A"
     print(f"Template escolhido: {template}")
 
-    # Gera angulos com o tom do template
+    # Gera angulos com o tom do template (em thread para nao bloquear o event loop)
     print(f"Gerando angulos para template {template}...")
-    angles_data = generate_angles_with_claude(trend, template)
+    angles_data = await asyncio.to_thread(generate_angles_with_claude, trend, template)
     angulos     = angles_data.get("angulos", [])
 
     if not angulos:
