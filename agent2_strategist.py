@@ -177,7 +177,7 @@ async def run_strategist(trends_data: dict, selected_index: int = 0) -> dict:
     Recebe trends_data e o indice da trend ja escolhida pelo usuario.
     Retorna dict com 'trend' e 'angulo' escolhidos.
     """
-    global _angulo_escolhido, _aguardando_angulo
+    global _angulo_escolhido, _aguardando_angulo, _template_escolhido, _aguardando_template
 
     # Reseta estado
     reset_strategist()
