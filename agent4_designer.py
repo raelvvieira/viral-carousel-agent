@@ -288,14 +288,233 @@ async def get_image_for_cta_slide(titulo: str, corpo: str) -> str:
         return await generate_image_freepik(prompt, slide_num=10, use_character=False)
 
 
+# ─── TEMPLATE B — FEED CLARO ─────────────────────────────────────
+
+def build_slide_html_b(slide_num: int, titulo: str, corpo: str,
+                       image_path: str = None, formato: str = "light") -> str:
+    """Template B: fundo cinza claro, perfil topo-esq, pills footer, estilo Twitter/X."""
+    img_b64 = ""
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+    profile_b64 = ""
+    if os.path.exists("/tmp/profile_image.jpg"):
+        with open("/tmp/profile_image.jpg", "rb") as f:
+            profile_b64 = base64.b64encode(f.read()).decode()
+
+    img_src     = f"data:image/jpeg;base64,{img_b64}" if img_b64 else ""
+    profile_src = f"data:image/jpeg;base64,{profile_b64}" if profile_b64 else PROFILE_IMAGE_URL
+
+    has_img   = bool(img_src) and formato not in ["text_only", "dark", "cta"]
+    has_corpo = bool(corpo)   and formato != "cover"
+
+    img_html   = f'<div class="image-card" style="background-image:url(\'{img_src}\');"></div>' if has_img else ""
+    corpo_html = f'<div class="slide-body">{corpo}</div>' if has_corpo else ""
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:1080px; height:1350px; overflow:hidden; background:#EBEBEB; font-family:'Montserrat',sans-serif; position:relative; }}
+.copyright {{ position:absolute; top:28px; right:40px; text-align:right; font-size:14px; color:#9B9B9B; line-height:1.5; }}
+.profile {{ position:absolute; top:80px; left:60px; display:flex; align-items:center; gap:16px; }}
+.avatar {{ width:88px; height:88px; border-radius:50%; padding:3px;
+  background:linear-gradient(135deg,#f97316,#ef4444,#a855f7,#1e1b4b); flex-shrink:0; }}
+.avatar-img {{ width:100%; height:100%; border-radius:50%; background:url('{profile_src}') center/cover; }}
+.brand-info {{ display:flex; flex-direction:column; gap:4px; }}
+.brand-row {{ display:flex; align-items:center; gap:6px; }}
+.brand-name {{ font-size:28px; font-weight:700; color:#1e2d3d; line-height:1; }}
+.badge {{ display:inline-flex; align-items:center; justify-content:center;
+  width:22px; height:22px; background:#1d9bf0; border-radius:50%;
+  color:#fff; font-size:12px; font-weight:700; }}
+.handle {{ font-size:20px; color:#6B7280; }}
+.main {{ position:absolute; left:60px; right:60px; top:225px; bottom:120px;
+  display:flex; flex-direction:column; justify-content:flex-start; }}
+.slide-title {{ font-size:52px; font-weight:700; line-height:108%; letter-spacing:-0.02em; color:#1e2d3d; margin-bottom:16px; }}
+.slide-body {{ font-size:38px; font-weight:400; line-height:140%; color:#374151; margin-bottom:32px; }}
+.image-card {{ width:960px; height:490px; border-radius:20px; background:#ccc center/cover; flex-shrink:0; }}
+.footer {{ position:absolute; bottom:40px; left:60px; right:60px;
+  display:flex; align-items:center; justify-content:space-between; }}
+.pills {{ display:flex; gap:12px; align-items:center; }}
+.pill-wavy {{ background:linear-gradient(135deg,#f97316,#ef4444,#ec4899); color:#fff; font-weight:700; font-size:18px; padding:10px 28px; border-radius:50px; }}
+.pill-handle {{ background:#2d3748; color:#fff; font-size:18px; padding:10px 28px; border-radius:50px; }}
+.arrasta {{ font-size:16px; color:#9B9B9B; }}
+</style></head><body>
+<div class="copyright">Copyright ©<br>2026</div>
+<div class="profile">
+  <div class="avatar"><div class="avatar-img"></div></div>
+  <div class="brand-info">
+    <div class="brand-row">
+      <span class="brand-name">WAVY</span>
+      <span class="badge">&#10003;</span>
+    </div>
+    <span class="handle">@wavy.mkt</span>
+  </div>
+</div>
+<div class="main">
+  <div class="slide-title">{titulo}</div>
+  {corpo_html}
+  {img_html}
+</div>
+<div class="footer">
+  <div class="pills">
+    <span class="pill-wavy">WAVY</span>
+    <span class="pill-handle">@wavy.mkt</span>
+  </div>
+  <span class="arrasta">Arrasta para o lado &gt;</span>
+</div>
+</body></html>"""
+
+
+# ─── TEMPLATE C — EDITORIAL ESCURO ───────────────────────────────
+
+def build_slide_html_c(slide_num: int, titulo: str, corpo: str,
+                       image_path: str = None, formato: str = "light") -> str:
+    """Template C: fundo preto, tipografia grande branca, CTA com banner rosa."""
+    img_b64 = ""
+    if image_path and os.path.exists(image_path):
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+    profile_b64 = ""
+    if os.path.exists("/tmp/profile_image.jpg"):
+        with open("/tmp/profile_image.jpg", "rb") as f:
+            profile_b64 = base64.b64encode(f.read()).decode()
+
+    img_src     = f"data:image/jpeg;base64,{img_b64}" if img_b64 else ""
+    profile_src = f"data:image/jpeg;base64,{profile_b64}" if profile_b64 else PROFILE_IMAGE_URL
+
+    # ── COVER (Slide 1) ──
+    if formato == "cover":
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:1080px; height:1350px; overflow:hidden; background:#000; font-family:'Montserrat',sans-serif; position:relative; }}
+.bg {{ position:absolute; inset:0;
+  background: linear-gradient(to bottom, rgba(0,0,0,0.05) 35%, rgba(0,0,0,0.92) 65%){f", url('{img_src}') center/cover" if img_src else ""}; }}
+.copyright {{ position:absolute; top:28px; right:40px; text-align:right; font-size:14px; color:rgba(255,255,255,0.6); line-height:1.5; z-index:2; }}
+.content {{ position:absolute; left:60px; right:60px; top:58%; transform:translateY(-50%);
+  display:flex; flex-direction:column; align-items:center; gap:24px; z-index:2; }}
+.profile-row {{ display:flex; align-items:center; gap:14px; }}
+.avatar {{ width:88px; height:88px; border-radius:50%; padding:3px;
+  background:linear-gradient(135deg,#6d28d9,#7c3aed,#4f46e5); flex-shrink:0; }}
+.avatar-img {{ width:100%; height:100%; border-radius:50%; background:url('{profile_src}') center/cover; }}
+.brand-info {{ display:flex; flex-direction:column; gap:4px; }}
+.brand-row {{ display:flex; align-items:center; gap:6px; }}
+.brand-name {{ font-size:26px; font-weight:700; color:#fff; line-height:1; }}
+.badge {{ display:inline-flex; align-items:center; justify-content:center;
+  width:20px; height:20px; background:#1d9bf0; border-radius:50%; color:#fff; font-size:11px; font-weight:700; }}
+.handle {{ font-size:18px; color:rgba(255,255,255,0.75); }}
+.headline {{ font-size:72px; font-weight:700; line-height:105%; letter-spacing:-0.02em;
+  color:#fff; text-align:center; max-width:860px; }}
+.arrasta {{ position:absolute; bottom:50px; left:50%; transform:translateX(-50%);
+  font-size:18px; font-weight:600; color:#fff; white-space:nowrap; z-index:2; }}
+</style></head><body>
+<div class="bg"></div>
+<div class="copyright">Copyright &#169;<br>2026</div>
+<div class="content">
+  <div class="profile-row">
+    <div class="avatar"><div class="avatar-img"></div></div>
+    <div class="brand-info">
+      <div class="brand-row">
+        <span class="brand-name">WAVY</span>
+        <span class="badge">&#10003;</span>
+      </div>
+      <span class="handle">@wavy.mkt</span>
+    </div>
+  </div>
+  <div class="headline">{titulo}</div>
+</div>
+<div class="arrasta">Arrasta para o lado &gt;</div>
+</body></html>"""
+
+    # ── CTA (Slide 10) ──
+    if formato == "cta":
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:1080px; height:1350px; overflow:hidden; background:#0a0a0a; font-family:'Montserrat',sans-serif; }}
+.banner {{ width:1080px; height:130px; background:#FFE5E8;
+  display:flex; align-items:center; gap:20px; padding:0 50px; flex-shrink:0; }}
+.banner-icon {{ width:52px; height:52px; background:#E8334A; border-radius:14px;
+  display:flex; align-items:center; justify-content:center; color:#fff; font-size:26px; font-weight:700; flex-shrink:0; }}
+.banner-text {{ font-size:26px; font-weight:700; color:#E8334A; }}
+.cover-img {{ width:1080px; height:580px; background:{f"url('{img_src}') center/cover" if img_src else "#1a1a1a"}; flex-shrink:0; }}
+.text-area {{ flex:1; display:flex; flex-direction:column; justify-content:center;
+  padding:50px 60px 40px; gap:20px; }}
+.cta-title {{ font-size:62px; font-weight:700; line-height:108%; letter-spacing:-0.02em; color:#fff; }}
+.cta-body {{ font-size:36px; font-weight:400; line-height:140%; color:#C8C8C8; }}
+</style></head><body style="display:flex;flex-direction:column;">
+<div class="banner">
+  <div class="banner-icon">&#43;</div>
+  <span class="banner-text">Me siga para mais conteudos como esse!</span>
+</div>
+<div class="cover-img"></div>
+<div class="text-area">
+  <div class="cta-title">{titulo}</div>
+  {f'<div class="cta-body">{corpo}</div>' if corpo else ""}
+</div>
+</body></html>"""
+
+    # ── CONTENT (slides 2–9) ──
+    has_img   = bool(img_src) and formato not in ["text_only", "dark"]
+    img_html  = f'<div class="image-card" style="background-image:url(\'{img_src}\');"></div>' if has_img else ""
+    corpo_html = f'<div class="slide-body">{corpo}</div>' if corpo else ""
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* {{ margin:0; padding:0; box-sizing:border-box; }}
+body {{ width:1080px; height:1350px; overflow:hidden; background:#0a0a0a; font-family:'Montserrat',sans-serif; position:relative; }}
+.copyright {{ position:absolute; top:28px; right:40px; text-align:right; font-size:14px; color:#9B9B9B; line-height:1.5; }}
+.main {{ position:absolute; left:60px; right:60px; top:110px; bottom:120px;
+  display:flex; flex-direction:column; justify-content:flex-start; }}
+.slide-title {{ font-size:67px; font-weight:700; line-height:105%; letter-spacing:-0.02em; color:#fff; margin-bottom:20px; }}
+.slide-body {{ font-size:40px; font-weight:400; line-height:140%; color:#C8C8C8; margin-bottom:30px; }}
+.image-card {{ width:960px; height:490px; border-radius:20px; background:#222 center/cover; flex-shrink:0; }}
+.footer {{ position:absolute; bottom:40px; left:60px; right:60px;
+  display:flex; align-items:center; justify-content:space-between; }}
+.pills {{ display:flex; gap:12px; align-items:center; }}
+.pill-wavy {{ background:linear-gradient(135deg,#f97316,#ef4444,#ec4899); color:#fff; font-weight:700; font-size:18px; padding:10px 28px; border-radius:50px; }}
+.pill-handle {{ border:2px solid rgba(255,255,255,0.35); color:#fff; font-size:18px; padding:10px 28px; border-radius:50px; background:transparent; }}
+.arrasta {{ font-size:16px; color:#9B9B9B; }}
+</style></head><body>
+<div class="copyright">Copyright &#169;<br>2026</div>
+<div class="main">
+  <div class="slide-title">{titulo}</div>
+  {corpo_html}
+  {img_html}
+</div>
+<div class="footer">
+  <div class="pills">
+    <span class="pill-wavy">WAVY</span>
+    <span class="pill-handle">@wavy.mkt</span>
+  </div>
+  <span class="arrasta">Arrasta para o lado &gt;</span>
+</div>
+</body></html>"""
+
+
 # ─── MONTAR HTML DO SLIDE ────────────────────────────────────────
 
 def build_slide_html(slide_num: int, titulo: str, corpo: str,
-                     image_path: str = None, formato: str = "light") -> str:
+                     image_path: str = None, formato: str = "light",
+                     template: str = "A") -> str:
     """
-    Monta o HTML de um slide individual baseado no template Wavy.
-    formato: 'cover' | 'light' | 'text_only' | 'dark' | 'cta'
+    Monta o HTML de um slide individual.
+    template: 'A' (Cinematico) | 'B' (Feed Claro) | 'C' (Editorial Escuro)
+    formato:  'cover' | 'light' | 'text_only' | 'dark' | 'cta'
     """
+    if template == "B":
+        return build_slide_html_b(slide_num, titulo, corpo, image_path, formato)
+    if template == "C":
+        return build_slide_html_c(slide_num, titulo, corpo, image_path, formato)
+    # Template A (default) — codigo original abaixo
 
     # Converte imagem local pra base64 pra embed no HTML
     img_b64 = ""
@@ -679,6 +898,8 @@ async def run_designer(copy_result: dict) -> list[str]:
     png_paths   = []
     drive_links = []
 
+    template = copy_result.get("template", "A")
+
     if formato == "carrossel":
         slides = copy.get("slides", [])
         total  = len(slides)
@@ -723,7 +944,7 @@ async def run_designer(copy_result: dict) -> list[str]:
                     text=f"✅ Imagem slide {n} gerada!"
                 )
 
-            html     = build_slide_html(n, titulo, corpo, image_path, fmt)
+            html     = build_slide_html(n, titulo, corpo, image_path, fmt, template=template)
             png_path = f"/tmp/wavy_slide_{n:02d}.png"
             await render_slide_to_png(html, png_path)
             png_paths.append(png_path)
