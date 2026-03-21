@@ -9,6 +9,7 @@ import os
 import json
 import base64
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 APIFY_API_KEY     = os.getenv("APIFY_API_KEY")
@@ -307,8 +308,48 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
-    """Minera os perfis da base — últimos 5 dias, até 10 posts por perfil, top 10 por engajamento."""
+def _scrape_perfil_fase1(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
+    """Fase 1: busca rápida de um único perfil (chamada paralela)."""
+    username = handle.lstrip("@")
+    try:
+        results = run_apify_actor(
+            "apify/instagram-reel-scraper",
+            {"username": [username], "maxItems": num_posts},
+            timeout=60
+        )
+    except Exception as e:
+        print(f"[SCRAPER] Erro ao buscar {handle}: {e}")
+        return []
+
+    posts = []
+    for item in results:
+        if len(posts) >= num_posts:
+            break
+        ts = item.get("timestamp") or item.get("takenAtTimestamp")
+        if ts:
+            try:
+                post_date = (
+                    datetime.utcfromtimestamp(ts)
+                    if isinstance(ts, (int, float))
+                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                )
+                if post_date < cutoff:
+                    continue
+            except Exception:
+                pass
+        item["_perfil_origem"] = handle
+        posts.append(item)
+    return posts
+
+
+def scrape_base_perfis(num_posts: int = 10, max_workers: int = 5) -> list[dict]:
+    """
+    Busca viral em 2 fases:
+      Fase 1 (paralela): todos os perfis simultaneamente, máx 10 posts cada, últimos 5 dias.
+      Fase 2 (seletiva): ordena por engajamento e retorna top 10.
+
+    Com max_workers=5 perfis rodam em paralelo → tempo ≈ ceil(N/5) × 60s ao invés de N × 60s.
+    """
     perfis = carregar_base_perfis()
     if not perfis:
         return []
@@ -316,37 +357,24 @@ def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
     cutoff = datetime.utcnow() - timedelta(days=5)
     todos_posts = []
 
-    for handle in perfis:
-        username = handle.lstrip("@")
-        results = run_apify_actor(
-            "apify/instagram-reel-scraper",
-            {
-                "username": [username],
-                "maxItems": num_posts
-            },
-            timeout=60
-        )
+    # ── Fase 1: scraping paralelo ───────────────────────────────────────────
+    print(f"[SCRAPER] Fase 1 — buscando {len(perfis)} perfis em paralelo ({max_workers} workers)...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_scrape_perfil_fase1, handle, num_posts, cutoff): handle
+            for handle in perfis
+        }
+        for future in as_completed(futures):
+            handle = futures[future]
+            try:
+                posts = future.result()
+                print(f"[SCRAPER] {handle}: {len(posts)} posts coletados")
+                todos_posts.extend(posts)
+            except Exception as e:
+                print(f"[SCRAPER] Falha em {handle}: {e}")
 
-        count = 0
-        for item in results:
-            if count >= num_posts:
-                break
-            ts = item.get("timestamp") or item.get("takenAtTimestamp")
-            if ts:
-                try:
-                    post_date = (
-                        datetime.utcfromtimestamp(ts)
-                        if isinstance(ts, (int, float))
-                        else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                    )
-                    if post_date < cutoff:
-                        continue
-                except Exception:
-                    pass
-            item["_perfil_origem"] = handle
-            todos_posts.append(item)
-            count += 1
-
+    # ── Fase 2: seleção por engajamento ────────────────────────────────────
+    print(f"[SCRAPER] Fase 2 — selecionando top 10 de {len(todos_posts)} posts coletados...")
     todos_posts.sort(key=calcular_engajamento, reverse=True)
     return todos_posts[:10]
 
