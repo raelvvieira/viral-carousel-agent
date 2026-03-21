@@ -307,47 +307,48 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def scrape_base_perfis(num_posts: int = 5) -> list[dict]:
-    """Minera os perfis da base — últimos 30 dias, ordena por engajamento."""
+def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
+    """Minera os perfis da base — últimos 5 dias, até 10 posts por perfil, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
 
-    usernames = [h.lstrip("@") for h in perfis]
-    cutoff = datetime.utcnow() - timedelta(days=30)
-
-    # Busca todos os perfis em uma única chamada (actor aceita lista)
-    results = run_apify_actor(
-        "apify/instagram-reel-scraper",
-        {
-            "username": usernames,
-            "maxItems": num_posts
-        },
-        timeout=180
-    )
-
+    cutoff = datetime.utcnow() - timedelta(days=5)
     todos_posts = []
-    for item in results:
-        # Filtro de data manual — últimos 30 dias
-        ts = item.get("timestamp") or item.get("takenAtTimestamp")
-        if ts:
-            try:
-                post_date = (
-                    datetime.utcfromtimestamp(ts)
-                    if isinstance(ts, (int, float))
-                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                )
-                if post_date < cutoff:
-                    continue
-            except Exception:
-                pass
 
-        autor = item.get("ownerUsername") or item.get("username") or ""
-        item["_perfil_origem"] = f"@{autor}" if autor else "?"
-        todos_posts.append(item)
+    for handle in perfis:
+        username = handle.lstrip("@")
+        results = run_apify_actor(
+            "apify/instagram-reel-scraper",
+            {
+                "username": [username],
+                "maxItems": num_posts
+            },
+            timeout=60
+        )
+
+        count = 0
+        for item in results:
+            if count >= num_posts:
+                break
+            ts = item.get("timestamp") or item.get("takenAtTimestamp")
+            if ts:
+                try:
+                    post_date = (
+                        datetime.utcfromtimestamp(ts)
+                        if isinstance(ts, (int, float))
+                        else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                    )
+                    if post_date < cutoff:
+                        continue
+                except Exception:
+                    pass
+            item["_perfil_origem"] = handle
+            todos_posts.append(item)
+            count += 1
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
-    return todos_posts[:20]
+    return todos_posts[:10]
 
 
 def scrape_por_tema(tema: str, plataforma: str = "instagram", max_items: int = 5) -> list[dict]:
@@ -434,7 +435,7 @@ def formatar_ranking(posts: list[dict], titulo: str = "Top Virais") -> str:
         return "Nenhum post encontrado."
 
     linhas = [f"🔥 {titulo}\n"]
-    for i, post in enumerate(posts[:5], 1):
+    for i, post in enumerate(posts[:10], 1):
         tipo_raw = post.get("type") or post.get("productType") or "post_estatico"
         tipo = "reel" if "video" in tipo_raw.lower() or "reel" in tipo_raw.lower() else \
                "carrossel" if "sidecar" in tipo_raw.lower() else "post_estatico"
