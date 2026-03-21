@@ -179,7 +179,7 @@ async def executar_scraper(bot: Bot, fonte: int, **kwargs):
     _estado["etapa_atual"] = "escolha_post"
     _estado["total_posts_disponiveis"] = len(posts)
     ranking = resultado.get("ranking_txt", "")
-    await msg(bot, ranking)
+    await msg(bot, ranking, parse_mode=None)
 
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
