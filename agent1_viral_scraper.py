@@ -331,8 +331,8 @@ def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
     username = handle.lstrip("@")
     results = run_apify_actor(
         "apify/instagram-reel-scraper",
-        {"username": [username], "maxItems": 30},
-        timeout=120
+        {"username": [username], "maxItems": 5},
+        timeout=45
     )
     if not results:
         print(f"[SCRAPER] {handle}: sem retorno do Apify")
@@ -363,7 +363,7 @@ def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
     return selecionados
 
 
-def scrape_base_perfis(num_posts: int = 10, max_workers: int = 5) -> list[dict]:
+def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10) -> list[dict]:
     """Busca perfis em paralelo — últimos 30 dias, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
