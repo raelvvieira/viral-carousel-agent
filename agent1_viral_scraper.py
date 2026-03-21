@@ -15,8 +15,8 @@ from datetime import datetime, timedelta
 APIFY_API_KEY     = os.getenv("APIFY_API_KEY")
 GOOGLE_VISION_KEY = os.getenv("GOOGLE_VISION_API_KEY")
 
-# Base de perfis gerenciada em memória (persistida via arquivo entre runs)
-BASE_PERFIS_PATH = "/tmp/wavy_base_perfis.json"
+# Base de perfis persistida no diretório do projeto
+BASE_PERFIS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wavy_base_perfis.json")
 
 PERFIS_DEFAULT = [
     "@brmetaverso",
