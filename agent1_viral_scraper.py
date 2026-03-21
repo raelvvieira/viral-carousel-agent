@@ -9,6 +9,7 @@ import os
 import json
 import base64
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 APIFY_API_KEY     = os.getenv("APIFY_API_KEY")
@@ -325,8 +326,45 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
-    """Minera os perfis da base — prefere últimos 30 dias, top 10 por engajamento."""
+def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
+    """Busca posts de um único perfil (usada em paralelo)."""
+    username = handle.lstrip("@")
+    results = run_apify_actor(
+        "apify/instagram-reel-scraper",
+        {"username": [username], "maxItems": 30},
+        timeout=120
+    )
+    if not results:
+        print(f"[SCRAPER] {handle}: sem retorno do Apify")
+        return []
+
+    recentes = []
+    todos_do_perfil = []
+    for item in results:
+        item["_perfil_origem"] = handle
+        todos_do_perfil.append(item)
+        ts = item.get("timestamp") or item.get("takenAtTimestamp")
+        if ts:
+            try:
+                post_date = (
+                    datetime.utcfromtimestamp(ts)
+                    if isinstance(ts, (int, float))
+                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                )
+                if post_date >= cutoff:
+                    recentes.append(item)
+            except Exception:
+                recentes.append(item)
+        else:
+            recentes.append(item)
+
+    selecionados = (recentes if recentes else todos_do_perfil)[:num_posts]
+    print(f"[SCRAPER] {handle}: {len(selecionados)} posts selecionados (de {len(results)} retornados)")
+    return selecionados
+
+
+def scrape_base_perfis(num_posts: int = 10, max_workers: int = 5) -> list[dict]:
+    """Busca perfis em paralelo — últimos 30 dias, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
@@ -334,43 +372,18 @@ def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
     cutoff = datetime.utcnow() - timedelta(days=30)
     todos_posts = []
 
-    for handle in perfis:
-        username = handle.lstrip("@")
-        print(f"[SCRAPER] Buscando {handle}...")
-        results = run_apify_actor(
-            "apify/instagram-reel-scraper",
-            {"username": [username], "maxItems": 30},
-            timeout=120
-        )
-
-        if not results:
-            print(f"[SCRAPER] {handle}: sem retorno do Apify")
-            continue
-
-        # Filtra últimos 30 dias; se nenhum passar, usa os mais recentes mesmo assim
-        recentes = []
-        todos_do_perfil = []
-        for item in results:
-            item["_perfil_origem"] = handle
-            todos_do_perfil.append(item)
-            ts = item.get("timestamp") or item.get("takenAtTimestamp")
-            if ts:
-                try:
-                    post_date = (
-                        datetime.utcfromtimestamp(ts)
-                        if isinstance(ts, (int, float))
-                        else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                    )
-                    if post_date >= cutoff:
-                        recentes.append(item)
-                except Exception:
-                    recentes.append(item)  # sem data → inclui
-            else:
-                recentes.append(item)  # sem campo ts → inclui
-
-        selecionados = recentes if recentes else todos_do_perfil[:num_posts]
-        todos_posts.extend(selecionados[:num_posts])
-        print(f"[SCRAPER] {handle}: {len(selecionados[:num_posts])} posts selecionados (de {len(results)} retornados)")
+    print(f"[SCRAPER] Buscando {len(perfis)} perfis em paralelo ({max_workers} workers)...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_scrape_perfil, handle, num_posts, cutoff): handle
+            for handle in perfis
+        }
+        for future in as_completed(futures):
+            handle = futures[future]
+            try:
+                todos_posts.extend(future.result())
+            except Exception as e:
+                print(f"[SCRAPER] Falha em {handle}: {e}")
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
     return todos_posts[:10]
