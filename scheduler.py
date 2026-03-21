@@ -28,7 +28,7 @@ from telegram.ext import (
 
 from agent1_viral_scraper import (
     run_viral_scraper, analisar_post_selecionado,
-    listar_perfis, adicionar_perfil, remover_perfil
+    listar_perfis, adicionar_perfil, remover_perfil, carregar_base_perfis
 )
 from agent2_research import run_research
 from agent3_copy import run_copy_agent, ajustar_slide
@@ -156,7 +156,25 @@ async def iniciar_pipeline(bot: Bot):
 
 async def executar_scraper(bot: Bot, fonte: int, **kwargs):
     """Roda o Viral Scraper e exibe o ranking para o usuário escolher."""
-    await msg(bot, f"🔍 Buscando posts virais... (fonte {fonte})")
+    if fonte == 1:
+        perfis = carregar_base_perfis()
+        lista_txt = "  ·  ".join(perfis) if perfis else "(nenhum perfil cadastrado)"
+        await msg(bot, f"🔍 Buscando posts em {len(perfis)} perfis:\n{lista_txt}", parse_mode=None)
+
+        loop = asyncio.get_event_loop()
+
+        def progress_cb(handle, count, views):
+            if count > 0:
+                views_txt = f" · melhor: {views/1000:.0f}K views" if views > 0 else ""
+                text = f"✅ {handle} — {count} post{'s' if count != 1 else ''}{views_txt}"
+            else:
+                text = f"⚠️ {handle} — sem posts recentes"
+            asyncio.run_coroutine_threadsafe(msg(bot, text, parse_mode=None), loop)
+
+        kwargs["progress_cb"] = progress_cb
+    else:
+        await msg(bot, f"🔍 Buscando posts virais... (fonte {fonte})")
+
     try:
         resultado = await asyncio.to_thread(run_viral_scraper, fonte, **kwargs)
     except Exception as e:

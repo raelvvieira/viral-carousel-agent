@@ -363,7 +363,7 @@ def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
     return selecionados
 
 
-def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10) -> list[dict]:
+def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10, progress_cb=None) -> list[dict]:
     """Busca perfis em paralelo — últimos 30 dias, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
@@ -381,9 +381,16 @@ def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10) -> list[dict]
         for future in as_completed(futures):
             handle = futures[future]
             try:
-                todos_posts.extend(future.result())
+                selecionados = future.result()
+                todos_posts.extend(selecionados)
+                if progress_cb:
+                    melhor = max(selecionados, key=calcular_engajamento) if selecionados else None
+                    views = (melhor.get("videoPlayCount") or melhor.get("playCount") or 0) if melhor else 0
+                    progress_cb(handle, len(selecionados), views)
             except Exception as e:
                 print(f"[SCRAPER] Falha em {handle}: {e}")
+                if progress_cb:
+                    progress_cb(handle, 0, 0)
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
     return todos_posts[:10]
@@ -512,7 +519,7 @@ def run_viral_scraper(fonte: int, **kwargs) -> dict:
     Retorna dict com posts brutos e ranking formatado.
     """
     if fonte == 1:
-        posts = scrape_base_perfis()
+        posts = scrape_base_perfis(progress_cb=kwargs.get("progress_cb"))
         ranking_txt = formatar_ranking(posts, "Virais da Sua Base · Instagram")
     elif fonte == 2:
         tema = kwargs.get("tema", "")
