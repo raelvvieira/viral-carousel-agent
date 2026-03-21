@@ -253,7 +253,7 @@ def extrair_copy(item: dict) -> dict:
 def calcular_engajamento(item: dict) -> int:
     return (
         (item.get("likesCount") or 0) +
-        (item.get("videoPlayCount") or 0) +
+        (item.get("videoPlayCount") or item.get("videoViewCount") or 0) +
         (item.get("savesCount") or 0) +
         (item.get("sharesCount") or 0)
     )
@@ -326,41 +326,26 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
+def _scrape_perfil(handle: str, num_posts: int) -> list[dict]:
     """Busca posts de um único perfil (usada em paralelo)."""
     username = handle.lstrip("@")
     results = run_apify_actor(
-        "apify/instagram-reel-scraper",
-        {"username": [username], "maxItems": 5},
-        timeout=45
+        "apify/instagram-post-scraper",
+        {
+            "username": [username],
+            "resultsLimit": num_posts,
+            "onlyPostsNewerThan": "5 days",
+            "skipPinnedPosts": True,
+        },
+        timeout=60
     )
     if not results:
         print(f"[SCRAPER] {handle}: sem retorno do Apify")
         return []
-
-    recentes = []
-    todos_do_perfil = []
     for item in results:
         item["_perfil_origem"] = handle
-        todos_do_perfil.append(item)
-        ts = item.get("timestamp") or item.get("takenAtTimestamp")
-        if ts:
-            try:
-                post_date = (
-                    datetime.utcfromtimestamp(ts)
-                    if isinstance(ts, (int, float))
-                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                )
-                if post_date >= cutoff:
-                    recentes.append(item)
-            except Exception:
-                recentes.append(item)
-        else:
-            recentes.append(item)
-
-    selecionados = (recentes if recentes else todos_do_perfil)[:num_posts]
-    print(f"[SCRAPER] {handle}: {len(selecionados)} posts selecionados (de {len(results)} retornados)")
-    return selecionados
+    print(f"[SCRAPER] {handle}: {len(results)} posts retornados")
+    return results
 
 
 def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10, progress_cb=None) -> list[dict]:
@@ -369,13 +354,12 @@ def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10, progress_cb=N
     if not perfis:
         return []
 
-    cutoff = datetime.utcnow() - timedelta(days=30)
     todos_posts = []
 
     print(f"[SCRAPER] Buscando {len(perfis)} perfis em paralelo ({max_workers} workers)...")
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_scrape_perfil, handle, num_posts, cutoff): handle
+            executor.submit(_scrape_perfil, handle, num_posts): handle
             for handle in perfis
         }
         for future in as_completed(futures):
@@ -385,7 +369,7 @@ def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10, progress_cb=N
                 todos_posts.extend(selecionados)
                 if progress_cb:
                     melhor = max(selecionados, key=calcular_engajamento) if selecionados else None
-                    views = (melhor.get("videoPlayCount") or melhor.get("playCount") or 0) if melhor else 0
+                    views = (melhor.get("videoPlayCount") or melhor.get("videoViewCount") or 0) if melhor else 0
                     progress_cb(handle, len(selecionados), views)
             except Exception as e:
                 print(f"[SCRAPER] Falha em {handle}: {e}")
@@ -488,7 +472,7 @@ def formatar_ranking(posts: list[dict], titulo: str = "Top Virais") -> str:
 
         autor = post.get("ownerUsername") or post.get("username") or "?"
         origem = post.get("_perfil_origem", f"@{autor}")
-        views = post.get("videoPlayCount") or 0
+        views = post.get("videoPlayCount") or post.get("videoViewCount") or 0
         likes = post.get("likesCount") or 0
         eng_pct = calcular_engajamento_pct(post)
         legenda = post.get("caption") or post.get("text") or ""
