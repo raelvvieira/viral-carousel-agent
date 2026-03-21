@@ -1,9 +1,11 @@
 [phases.setup]
-nixPkgs = ["chromium", "playwright-driver"]
+nixPkgs = ["python311", "chromium", "chromium-driver"]
 
 [phases.install]
 cmds = [
   "pip install -r requirements.txt",
-  "playwright install chromium",
-  "playwright install-deps chromium"
+  "playwright install chromium --with-deps"
 ]
+
+[start]
+cmd = "python scheduler.py"
