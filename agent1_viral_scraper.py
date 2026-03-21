@@ -326,12 +326,12 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
 def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
-    """Minera os perfis da base — últimos 5 dias, até 10 posts por perfil, top 10 por engajamento."""
+    """Minera os perfis da base — prefere últimos 30 dias, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
 
-    cutoff = datetime.utcnow() - timedelta(days=5)
+    cutoff = datetime.utcnow() - timedelta(days=30)
     todos_posts = []
 
     for handle in perfis:
@@ -339,14 +339,20 @@ def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
         print(f"[SCRAPER] Buscando {handle}...")
         results = run_apify_actor(
             "apify/instagram-reel-scraper",
-            {"username": [username], "maxItems": num_posts},
+            {"username": [username], "maxItems": 30},
             timeout=120
         )
 
-        count = 0
+        if not results:
+            print(f"[SCRAPER] {handle}: sem retorno do Apify")
+            continue
+
+        # Filtra últimos 30 dias; se nenhum passar, usa os mais recentes mesmo assim
+        recentes = []
+        todos_do_perfil = []
         for item in results:
-            if count >= num_posts:
-                break
+            item["_perfil_origem"] = handle
+            todos_do_perfil.append(item)
             ts = item.get("timestamp") or item.get("takenAtTimestamp")
             if ts:
                 try:
@@ -355,15 +361,16 @@ def scrape_base_perfis(num_posts: int = 10) -> list[dict]:
                         if isinstance(ts, (int, float))
                         else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
                     )
-                    if post_date < cutoff:
-                        continue
+                    if post_date >= cutoff:
+                        recentes.append(item)
                 except Exception:
-                    pass
-            item["_perfil_origem"] = handle
-            todos_posts.append(item)
-            count += 1
+                    recentes.append(item)  # sem data → inclui
+            else:
+                recentes.append(item)  # sem campo ts → inclui
 
-        print(f"[SCRAPER] {handle}: {count} posts nos últimos 5 dias")
+        selecionados = recentes if recentes else todos_do_perfil[:num_posts]
+        todos_posts.extend(selecionados[:num_posts])
+        print(f"[SCRAPER] {handle}: {len(selecionados[:num_posts])} posts selecionados (de {len(results)} retornados)")
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
     return todos_posts[:10]
