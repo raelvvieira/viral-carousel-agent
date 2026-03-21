@@ -1,12 +1,7 @@
 anthropic
 httpx
+requests
 python-telegram-bot>=20.0
-notion-client
 playwright
-google-auth
-google-auth-oauthlib
-google-auth-httplib2
-google-api-python-client
 Pillow
-apscheduler
 python-dotenv

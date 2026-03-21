@@ -1,197 +1,460 @@
 """
-SCHEDULER - WAVY AGENTS
-Conecta os 4 agentes, agenda execucao automatica 3x por semana,
-e transmite progresso em tempo real via Telegram.
+SCHEDULER — PIPELINE MASTER
+Orquestrador do pipeline completo de criação de conteúdo viral para Instagram.
+Gerencia todas as etapas via Telegram bot:
+
+  ETAPA 1 — Viral Scraper  (fonte → top 5 posts → usuário escolhe)
+  ETAPA 2 — Research Agent (4-6 buscas → briefing → aprovação)
+  ETAPA 3 — Formato        (carrossel / post único / reel)
+  ETAPA 4 — Copy Agent v3  (copy nova → aprovação)
+  ETAPA 5 — Image Agent v2 (imagens slide a slide → aprovação)
+  ETAPA 6 — Designer v3    (HTML → Playwright → álbum Telegram)
 """
 
 import os
+import json
 import asyncio
 import logging
-import json
 from datetime import datetime
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from telegram import Bot, Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
-from agent1_scout import run_scout
-from agent2_strategist import run_strategist, set_template_escolhido, set_angulo_escolhido
-from agent3_copywriter import run_copywriter, set_copy_decision
-from agent4_designer import run_designer
+from telegram import (
+    Bot, Update, BotCommand,
+    InlineKeyboardButton, InlineKeyboardMarkup
+)
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler,
+    MessageHandler, ContextTypes, filters
+)
 
-# --- CONFIGURACOES ---
-TELEGRAM_TOKEN   = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID"))
+from agent1_viral_scraper import (
+    run_viral_scraper, analisar_post_selecionado,
+    listar_perfis, adicionar_perfil, remover_perfil
+)
+from agent2_research import run_research
+from agent3_copy import run_copy_agent, ajustar_slide
+from agent4_image import run_image_agent, trocar_imagem
+from agent5_designer import run_designer
+
+# ── CONFIGURAÇÃO ─────────────────────────────────────────────────────────────
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = int(os.getenv("TELEGRAM_CHAT_ID", "0"))
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%d/%m/%Y %H:%M:%S"
 )
-log = logging.getLogger("wavy-scheduler")
+log = logging.getLogger("wavy-pipeline")
 
-# Estado global
-_pipeline_running       = False
-_shown_trend_titles: list[str] = []
-_current_trends_data: dict     = {}
+# ── ESTADO GLOBAL DO PIPELINE ────────────────────────────────────────────────
+_estado = {
+    "etapa_atual": None,       # "scraper" | "research" | "formato" | "copy" | "imagens" | "design" | None
+    "rodando": False,
+    "viral_payload": None,
+    "briefing_payload": None,
+    "formato": None,
+    "num_slides": 7,
+    "copy_payload": None,
+    "image_payload": None,
+    "template": "A",
+    "perfil": {
+        "nome": None,
+        "handle": None,
+        "foto_url": None
+    },
+    "aguardando_input": None,  # chave do input esperado
+}
+
+_perfil_path = "/tmp/wavy_perfil.json"
 
 
-# --- UTILITARIO: envia status no Telegram ---
+# ── PERSISTÊNCIA DO PERFIL ───────────────────────────────────────────────────
 
-async def status(bot: Bot, msg: str):
-    """Envia mensagem de progresso ao usuario."""
+def carregar_perfil():
     try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+        with open(_perfil_path, "r") as f:
+            _estado["perfil"] = json.load(f)
+    except Exception:
+        pass
+
+
+def salvar_perfil():
+    with open(_perfil_path, "w") as f:
+        json.dump(_estado["perfil"], f, ensure_ascii=False)
+
+
+# ── HELPERS ──────────────────────────────────────────────────────────────────
+
+async def msg(bot: Bot, texto: str, parse_mode: str = "Markdown"):
+    try:
+        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=texto, parse_mode=parse_mode)
     except Exception as e:
-        log.warning(f"Falha ao enviar status: {e}")
+        log.warning(f"Falha ao enviar mensagem: {e}")
 
 
-# --- ENVIAR TRENDS ---
+def kb(*botoes: list) -> InlineKeyboardMarkup:
+    """Atalho para criar InlineKeyboardMarkup."""
+    return InlineKeyboardMarkup(botoes)
 
-async def send_trends_to_telegram(bot: Bot, trends_data: dict):
-    global _current_trends_data
-    _current_trends_data = trends_data
 
-    trends = trends_data.get("trends", [])
-    if not trends:
-        await status(bot, "Nenhuma trend encontrada. Tente novamente.")
-        return
+def resetar_estado():
+    _estado.update({
+        "etapa_atual": None, "rodando": False,
+        "viral_payload": None, "briefing_payload": None,
+        "formato": None, "num_slides": 7,
+        "copy_payload": None, "image_payload": None,
+        "template": "A", "aguardando_input": None,
+    })
 
-    texto = "*Top 5 trends de hoje:*\n\n"
-    emojis = ["1", "2", "3", "4", "5"]
-    for i, trend in enumerate(trends):
-        texto += (
-            f"{emojis[i]}. *{trend['titulo']}*\n"
-            f"{trend['topico']} | {trend['score_viralidade']}/100\n"
-            f"_{trend['descricao']}_\n\n"
-        )
 
-    botoes_escolha = [
-        InlineKeyboardButton(emojis[i], callback_data=f"trend_{i}")
-        for i in range(len(trends))
-    ]
-    botao_outros = InlineKeyboardButton("Buscar outros temas", callback_data="scout_retry")
-    keyboard = InlineKeyboardMarkup([botoes_escolha, [botao_outros]])
+# ── ETAPA 0: CHECAR PERFIL ───────────────────────────────────────────────────
 
+async def verificar_perfil(bot: Bot) -> bool:
+    """Retorna True se o perfil está configurado."""
+    p = _estado["perfil"]
+    if p["nome"] and p["handle"]:
+        return True
+
+    await msg(bot,
+        "👤 *Primeira vez aqui!*\n\n"
+        "Para personalizar os posts com sua identidade, preciso de:\n"
+        "• Seu nome (ex: Rael Costa)\n"
+        "• Seu @handle (ex: @raelcosta)\n"
+        "• URL da sua foto de perfil\n\n"
+        "_Digite seu nome agora:_"
+    )
+    _estado["aguardando_input"] = "perfil_nome"
+    return False
+
+
+# ── ETAPA 1: VIRAL SCRAPER ───────────────────────────────────────────────────
+
+async def iniciar_pipeline(bot: Bot):
+    """Passo inicial: pergunta a fonte do post viral."""
+    _estado["etapa_atual"] = "scraper"
+    await msg(bot,
+        "🚀 *Wavy Pipeline iniciado!*\n\n"
+        "De onde quer buscar o post viral de referência?\n",
+        parse_mode="Markdown"
+    )
+    keyboard = kb(
+        [
+            InlineKeyboardButton("📋 1. Minha base de perfis", callback_data="fonte_1"),
+            InlineKeyboardButton("🔍 2. Tema", callback_data="fonte_2"),
+        ],
+        [
+            InlineKeyboardButton("🔗 3. Link direto", callback_data="fonte_3"),
+            InlineKeyboardButton("🔥 4. Top viral geral", callback_data="fonte_4"),
+        ]
+    )
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text=texto,
-        parse_mode="Markdown",
+        text="Escolha a fonte:",
         reply_markup=keyboard
     )
 
 
-# --- PIPELINE: SCOUT ---
-
-async def run_full_pipeline(retry: bool = False):
-    global _pipeline_running, _shown_trend_titles
-
-    if _pipeline_running:
-        log.warning("Pipeline ja esta rodando.")
+async def executar_scraper(bot: Bot, fonte: int, **kwargs):
+    """Roda o Viral Scraper e exibe o ranking para o usuário escolher."""
+    await msg(bot, f"🔍 Buscando posts virais... (fonte {fonte})")
+    try:
+        resultado = await asyncio.to_thread(run_viral_scraper, fonte, **kwargs)
+    except Exception as e:
+        await msg(bot, f"❌ Erro no Scraper: {str(e)[:200]}")
+        resetar_estado()
         return
 
-    _pipeline_running = True
-    bot = Bot(token=TELEGRAM_TOKEN)
-    now = datetime.now().strftime("%d/%m/%Y as %H:%M")
-
-    try:
-        if not retry:
-            _shown_trend_titles = []
-            await status(bot, f"Wavy iniciado! {now}\n\nAgente 1 - Scout\nColetando conteudo de 27 fontes (15 RSS + 12 Reddit)...")
-
-        log.info("Agente 1 - Scout")
-        trends_data = await run_scout(excluded_titles=_shown_trend_titles if _shown_trend_titles else None)
-
-        if not trends_data.get("trends"):
-            await status(bot, "Nenhuma trend encontrada hoje. Tente novamente mais tarde.")
-            return
-
-        count = len(trends_data["trends"])
-        await status(bot, f"Scout concluido!\n{count} trends identificadas.\n\nEscolha uma trend abaixo:")
-
-        for trend in trends_data.get("trends", []):
-            titulo = trend.get("titulo", "")
-            if titulo and titulo not in _shown_trend_titles:
-                _shown_trend_titles.append(titulo)
-
-        await send_trends_to_telegram(bot, trends_data)
-
-    except Exception as e:
-        log.error(f"Erro no pipeline Scout: {e}")
-        await status(bot, f"Erro no Scout:\n{str(e)[:200]}")
-    finally:
-        _pipeline_running = False
-
-
-# --- PIPELINE: AGENTES 2, 3, 4 ---
-
-async def run_pipeline_from_trend(trend_index: int):
-    global _pipeline_running, _current_trends_data
-
-    _pipeline_running = True
-    bot = Bot(token=TELEGRAM_TOKEN)
-
-    try:
-        trend = _current_trends_data.get("trends", [])[trend_index]
-
-        # AGENTE 2 - run_strategist envia os botoes de template internamente
-        # (apos reset, garantindo ordem correta)
-        log.info("Agente 2 - Estrategista")
-        final_choice = await run_strategist(_current_trends_data, selected_index=trend_index)
-        if not final_choice:
-            await status(bot, "Nenhum angulo escolhido. Pipeline cancelado.")
-            return
-
-        template = final_choice.get("template", "A")
-        angulo   = final_choice.get("angulo", {})
-        log.info(f"Template {template} | Angulo: {angulo.get('titulo','')}")
-
-        # --- AGENTE 3: COPY ---
-        await status(bot,
-            f"Angulo escolhido:\n_{angulo.get('titulo','')}_ \n\n"
-            f"Agente 3 - Copywriter\n"
-            f"Pesquisando dados reais na web sobre o tema...\n"
-            f"(pode levar ~1 min)"
+    posts = resultado.get("posts", [])
+    if not posts:
+        await msg(bot,
+            "😕 Nenhum post encontrado com essa fonte.\n\n"
+            "Quer tentar outra?"
         )
-        log.info("Agente 3 - Copywriter: pesquisa")
+        await iniciar_pipeline(bot)
+        return
 
-        # Notifica quando a pesquisa termina e copy comeca
-        async def notifica_gerando_copy():
-            await asyncio.sleep(20)  # ~tempo da pesquisa web
-            await status(bot, "Pesquisa concluida!\n\nGerando copy dos 10 slides com Claude...\n(pode levar ~1 min)")
+    _estado["etapa_atual"] = "escolha_post"
+    ranking = resultado.get("ranking_txt", "")
+    await msg(bot, ranking)
 
-        asyncio.create_task(notifica_gerando_copy())
+    # Botões de escolha (máx 5)
+    botoes = [
+        InlineKeyboardButton(f"#{i+1}", callback_data=f"post_{i}")
+        for i in range(min(5, len(posts)))
+    ]
+    botoes_linhas = [botoes[:3], botoes[3:]] if len(botoes) > 3 else [botoes]
+    botoes_linhas.append([InlineKeyboardButton("🔄 Buscar outros", callback_data="scraper_retry")])
 
-        copy_result = await run_copywriter(final_choice)
-        if not copy_result:
-            await status(bot, "Erro ao gerar copy. Pipeline cancelado.")
-            return
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="Qual post quer analisar como referência?",
+        reply_markup=InlineKeyboardMarkup(botoes_linhas)
+    )
 
-        slides_count = len(copy_result.get("copy", {}).get("slides", []))
-        log.info(f"Copy gerada: {slides_count} slides")
 
-        # --- AGENTE 4: DESIGNER ---
-        await status(bot,
-            f"Copy aprovada! {slides_count} slides.\n\n"
-            f"Agente 4 - Designer\n"
-            f"Gerando imagens no Freepik...\n"
-            f"Slide a slide (3-5 min no total)"
-        )
-        log.info(f"Agente 4 - Designer (template {template})")
-
-        png_paths = await run_designer(copy_result)
-
-        await status(bot, f"Pipeline concluido!\n{len(png_paths)} slides gerados e enviados acima.")
-        log.info(f"Pipeline concluido! {len(png_paths)} slides.")
-
+async def analisar_post_escolhido(bot: Bot, post_index: int):
+    """Extrai copy do post escolhido via OCR/transcrição."""
+    await msg(bot, f"🔬 Analisando post #{post_index + 1}...\nExtração de copy via OCR/transcrição.")
+    try:
+        payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
     except Exception as e:
-        log.error(f"Erro no pipeline (trend {trend_index}): {e}")
-        await status(bot, f"Erro no pipeline:\n{str(e)[:300]}")
-    finally:
-        _pipeline_running = False
+        await msg(bot, f"❌ Erro ao analisar post: {str(e)[:200]}")
+        return
+
+    if "erro" in payload:
+        await msg(bot, f"❌ {payload['erro']}")
+        return
+
+    _estado["viral_payload"] = payload
+    post = payload.get("post_viral", {})
+    copy = post.get("copy", {})
+    metricas = post.get("metricas", {})
+
+    resumo = (
+        f"✅ *Post viral analisado!*\n\n"
+        f"📌 Autor: {post.get('autor', '?')}\n"
+        f"📊 {metricas.get('likes', 0)} likes · {metricas.get('views', 0)} views · "
+        f"{metricas.get('engajamento_pct', 0)}% eng\n\n"
+        f"📝 *Copy extraída:*\n"
+        f"_{copy.get('copy_consolidada', '(sem texto detectado)')[:300]}_\n\n"
+        f"─────────────────────────\n"
+        f"Como quer prosseguir?"
+    )
+    await msg(bot, resumo)
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="Avançar para pesquisa?",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("✅ Aprovado — pesquisar", callback_data="viral_ok"),
+                InlineKeyboardButton("🔄 Escolher outro post", callback_data="scraper_retry"),
+            ]
+        )
+    )
 
 
-# --- CALLBACKS ---
+# ── ETAPA 2: RESEARCH AGENT ──────────────────────────────────────────────────
+
+async def executar_research(bot: Bot):
+    """Roda o Research Agent e apresenta o briefing."""
+    _estado["etapa_atual"] = "research"
+    await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 4–6 buscas estratégicas...\n_(pode levar ~1 min)_")
+    try:
+        payload = await asyncio.to_thread(run_research, _estado["viral_payload"])
+    except Exception as e:
+        await msg(bot, f"❌ Erro no Research: {str(e)[:200]}")
+        return
+
+    if "erro" in payload:
+        await msg(bot, f"❌ {payload['erro']}")
+        return
+
+    _estado["briefing_payload"] = payload
+    briefing = payload.get("briefing_pesquisa", {})
+    briefing_txt = briefing.get("briefing_formatado", "Briefing gerado.")
+    buscas = briefing.get("buscas_realizadas", 0)
+
+    await msg(bot,
+        f"📋 *Briefing de Pesquisa pronto!*\n\n"
+        f"_{buscas} buscas realizadas_\n\n"
+        f"{briefing_txt[:2000]}\n\n"
+        f"─────────────────────────\n"
+        f"Aprovado? Ou quer que eu aprofunde algum ponto?"
+    )
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="Próxima etapa:",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("✅ Aprovado — escolher formato", callback_data="briefing_ok"),
+                InlineKeyboardButton("🔄 Refazer pesquisa", callback_data="research_retry"),
+            ]
+        )
+    )
+
+
+# ── ETAPA 3: ESCOLHA DO FORMATO ──────────────────────────────────────────────
+
+async def perguntar_formato(bot: Bot):
+    """Pergunta o formato de saída entre Research e Copy."""
+    _estado["etapa_atual"] = "formato"
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="📐 *Qual formato você quer para esse conteúdo?*",
+        parse_mode="Markdown",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("📑 Carrossel (7 slides)", callback_data="fmt_carrossel_7"),
+                InlineKeyboardButton("📑 Carrossel (10 slides)", callback_data="fmt_carrossel_10"),
+            ],
+            [
+                InlineKeyboardButton("🖼️ Post único", callback_data="fmt_post_unico"),
+                InlineKeyboardButton("🎬 Roteiro de Reel", callback_data="fmt_reel"),
+            ]
+        )
+    )
+
+
+# ── ETAPA 4: COPY AGENT ──────────────────────────────────────────────────────
+
+async def executar_copy(bot: Bot):
+    """Roda o Copy Agent e apresenta para aprovação."""
+    _estado["etapa_atual"] = "copy"
+    fmt = _estado.get("formato", "carrossel")
+    num = _estado.get("num_slides", 7)
+    await msg(bot,
+        f"✍️ *Copy Agent v3 iniciado!*\n\n"
+        f"Formato: {fmt.replace('_', ' ').title()} · {num} slides\n\n"
+        f"Gerando copy inspirada no viral com dados da pesquisa...\n_(pode levar ~1 min)_"
+    )
+    try:
+        payload = await asyncio.to_thread(
+            run_copy_agent, _estado["briefing_payload"], fmt, num
+        )
+    except Exception as e:
+        await msg(bot, f"❌ Erro na Copy: {str(e)[:200]}")
+        return
+
+    if "erro" in payload:
+        await msg(bot, f"❌ {payload['erro']}")
+        return
+
+    _estado["copy_payload"] = payload
+    copy_data = payload.get("copy_aprovada", {})
+    copy_txt = copy_data.get("copy_formatada", "")
+
+    # Envia em partes se muito longa
+    partes = [copy_txt[i:i+3500] for i in range(0, len(copy_txt), 3500)]
+    for parte in partes:
+        await msg(bot, parte)
+
+    if fmt == "reel":
+        # Reel: sem imagens nem designer
+        await msg(bot,
+            "🎬 *Roteiro pronto!*\n\n"
+            "O roteiro acima é para você gravar e editar.\n\n"
+            "─────────────────────────\n"
+            "🏁 *Pipeline completo!* Quer ajustar algum bloco?"
+        )
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="O que fazer?",
+            reply_markup=kb(
+                [
+                    InlineKeyboardButton("✅ Perfeito!", callback_data="copy_ok_reel"),
+                    InlineKeyboardButton("✏️ Ajustar um bloco", callback_data="copy_ajustar"),
+                    InlineKeyboardButton("🔄 Refazer", callback_data="copy_redo"),
+                ]
+            )
+        )
+        return
+
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="Como ficou a copy?",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("✅ Aprovado — buscar imagens", callback_data="copy_ok"),
+                InlineKeyboardButton("✏️ Ajustar slide", callback_data="copy_ajustar"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Refazer com outro ângulo", callback_data="copy_redo"),
+            ]
+        )
+    )
+
+
+# ── ETAPA 5: IMAGE AGENT ─────────────────────────────────────────────────────
+
+async def executar_images(bot: Bot):
+    """Roda o Image Agent e apresenta URLs para aprovação."""
+    _estado["etapa_atual"] = "imagens"
+    copy_data = (_estado.get("copy_payload") or {}).get("copy_aprovada", {})
+    total_slides = len(copy_data.get("slides", []))
+    await msg(bot,
+        f"🖼️ *Image Agent v2 iniciado!*\n\n"
+        f"Buscando imagens para {total_slides} slides...\n"
+        f"Fontes: Freepik IA → Google Images → Pexels/Unsplash\n\n"
+        f"_(pode levar 2–4 min)_"
+    )
+    try:
+        payload = await asyncio.to_thread(run_image_agent, _estado["copy_payload"])
+    except Exception as e:
+        await msg(bot, f"❌ Erro no Image Agent: {str(e)[:200]}")
+        return
+
+    if "erro" in payload:
+        await msg(bot, f"❌ {payload['erro']}")
+        return
+
+    _estado["image_payload"] = payload
+    aprovacao_txt = payload.get("aprovacao_txt", "")
+    ok = payload.get("imagens_ok", 0)
+    total = payload.get("total_imagens", 0)
+
+    await msg(bot, aprovacao_txt[:3500])
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=f"✅ {ok}/{total} imagens encontradas. Aprovado?",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("✅ Aprovado — montar slides", callback_data="images_ok"),
+                InlineKeyboardButton("🔄 Trocar uma imagem", callback_data="images_trocar"),
+            ]
+        )
+    )
+
+
+# ── ETAPA 6: DESIGNER AGENT ──────────────────────────────────────────────────
+
+async def perguntar_template(bot: Bot):
+    """Pergunta o template visual antes de renderizar."""
+    _estado["etapa_atual"] = "template"
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text=(
+            "🎨 *Qual template visual?*\n\n"
+            "🅰️ Template A — Dark Cinematográfico (fundo preto, tipografia grande)\n"
+            "🅱️ Template B — Light Twitter Style (fundo cinza claro, cards)\n"
+            "©️ Template C — Editorial Escuro (preto total, imagem full-bleed no cover)"
+        ),
+        parse_mode="Markdown",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("🅰️ Template A", callback_data="template_A"),
+                InlineKeyboardButton("🅱️ Template B", callback_data="template_B"),
+                InlineKeyboardButton("©️ Template C", callback_data="template_C"),
+            ]
+        )
+    )
+
+
+async def executar_designer(bot: Bot):
+    """Roda o Designer Agent — renderiza e envia slides."""
+    _estado["etapa_atual"] = "design"
+    template = _estado.get("template", "A")
+    perfil   = _estado.get("perfil", {})
+    await msg(bot,
+        f"🎨 *Designer Agent v3 iniciado!*\n\n"
+        f"Template: {template}\n"
+        f"Renderizando slides com Playwright...\n\n"
+        f"_(cada slide aparece aqui para você acompanhar)_"
+    )
+    try:
+        pngs = await run_designer(_estado["image_payload"], template, perfil)
+    except Exception as e:
+        await msg(bot, f"❌ Erro no Designer: {str(e)[:200]}")
+        return
+
+    await msg(bot,
+        f"🏁 *Pipeline completo!*\n\n"
+        f"✅ {len(pngs)} slides entregues acima.\n\n"
+        f"Use /rodar para criar outro conteúdo."
+    )
+    resetar_estado()
+
+
+# ── HANDLERS DE CALLBACK ─────────────────────────────────────────────────────
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -200,95 +463,210 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query.message.chat.id != TELEGRAM_CHAT_ID:
         return
 
+    bot  = context.bot
     data = query.data
 
-    # Buscar outros temas
-    if data == "scout_retry":
-        global _pipeline_running
-        _pipeline_running = False
-        await query.message.reply_text("Buscando outros temas...\nAguarde!")
-        context.application.create_task(run_full_pipeline(retry=True))
-        return
-
-    # Escolha de trend
-    elif data.startswith("trend_"):
-        if _pipeline_running:
-            await query.message.reply_text("Aguarde, o sistema ainda esta processando.")
+    # ── Escolha de fonte ──
+    if data.startswith("fonte_"):
+        fonte = int(data.split("_")[1])
+        if fonte == 2:
+            await msg(bot, "🔍 Qual tema você quer pesquisar? _(ex: Meta Ads, IA, Produtividade)_")
+            _estado["aguardando_input"] = "tema_scraper"
             return
-
-        index = int(data.split("_")[1])
-        trends = _current_trends_data.get("trends", [])
-
-        if index >= len(trends):
-            await query.message.reply_text("Trend nao encontrada.")
+        if fonte == 3:
+            await msg(bot, "🔗 Cole o link do post ou perfil que quer analisar:")
+            _estado["aguardando_input"] = "link_scraper"
             return
+        context.application.create_task(executar_scraper(bot, fonte))
 
-        trend = trends[index]
-        _pipeline_running = True
+    # ── Scraper retry ──
+    elif data == "scraper_retry":
+        await iniciar_pipeline(bot)
 
-        await query.message.reply_text(
-            f"Trend selecionada:\n*{trend['titulo']}*\n\nEscolha o template visual:",
-            parse_mode="Markdown"
-        )
-        context.application.create_task(run_pipeline_from_trend(index))
-        return
+    # ── Escolha de post ──
+    elif data.startswith("post_"):
+        idx = int(data.split("_")[1])
+        context.application.create_task(analisar_post_escolhido(bot, idx))
 
-    # Escolha de template
-    elif data.startswith("template_"):
-        chosen = data.split("_")[1]
-        nomes  = {"A": "Cinematico", "B": "Feed Claro", "C": "Editorial Escuro"}
-        set_template_escolhido(chosen)
-        await query.message.reply_text(
-            f"Template {chosen} - {nomes.get(chosen, chosen)} selecionado!\n\nGerando angulos..."
-        )
-        return
+    # ── Post viral aprovado ──
+    elif data == "viral_ok":
+        context.application.create_task(executar_research(bot))
 
-    # Escolha de angulo
-    elif data.startswith("angulo_"):
-        try:
-            with open("/tmp/angles_data.json", "r", encoding="utf-8") as f:
-                angles_data = json.load(f)
-            angulos = angles_data.get("angulos", [])
-            index   = int(data.split("_")[1])
-            if index < len(angulos):
-                angulo = angulos[index]
-                set_angulo_escolhido(angulo)
-                await query.message.reply_text(
-                    f"Angulo escolhido:\n*{angulo['titulo']}*\n\nIniciando pesquisa e copy...",
-                    parse_mode="Markdown"
-                )
-        except Exception as e:
-            log.error(f"Erro ao processar angulo: {e}")
-            await query.message.reply_text("Erro ao processar escolha do angulo.")
-        return
+    # ── Research retry ──
+    elif data == "research_retry":
+        context.application.create_task(executar_research(bot))
 
-    # Aprovacao de copy
-    elif data == "copy_approve":
-        set_copy_decision("approve")
-        await query.message.reply_text("Copy aprovada!\n\nIniciando geracao das artes...")
-        return
+    # ── Briefing aprovado ──
+    elif data == "briefing_ok":
+        await perguntar_formato(bot)
 
-    # Refazer copy
+    # ── Formato escolhido ──
+    elif data.startswith("fmt_"):
+        partes = data.split("_")
+        if "carrossel" in data:
+            _estado["formato"] = "carrossel"
+            _estado["num_slides"] = int(partes[-1]) if partes[-1].isdigit() else 7
+        elif "post" in data:
+            _estado["formato"] = "post_unico"
+            _estado["num_slides"] = 1
+        elif "reel" in data:
+            _estado["formato"] = "reel"
+            _estado["num_slides"] = 0
+        context.application.create_task(executar_copy(bot))
+
+    # ── Copy aprovada (carrossel/post) ──
+    elif data == "copy_ok":
+        context.application.create_task(executar_images(bot))
+
+    # ── Copy aprovada (reel) ──
+    elif data == "copy_ok_reel":
+        resetar_estado()
+        await msg(bot, "✅ Perfeito! Use /rodar para criar outro conteúdo.")
+
+    # ── Copy: ajustar slide ──
+    elif data == "copy_ajustar":
+        await msg(bot, "✏️ Qual slide quer ajustar e o que mudar?\n_(ex: \"slide 3 — deixa mais agressivo\")_")
+        _estado["aguardando_input"] = "copy_ajuste"
+
+    # ── Copy: refazer ──
     elif data == "copy_redo":
-        set_copy_decision("redo")
-        await query.message.reply_text("Refazendo copy...\nAguarde.")
+        context.application.create_task(executar_copy(bot))
+
+    # ── Imagens aprovadas ──
+    elif data == "images_ok":
+        await perguntar_template(bot)
+
+    # ── Trocar imagem ──
+    elif data == "images_trocar":
+        await msg(bot, "🔄 Qual slide quer trocar? _(ex: \"slide 3\")_\nOu descreva a imagem ideal.")
+        _estado["aguardando_input"] = "image_troca"
+
+    # ── Template escolhido ──
+    elif data.startswith("template_"):
+        _estado["template"] = data.split("_")[1]
+        context.application.create_task(executar_designer(bot))
+
+
+# ── HANDLER DE MENSAGENS DE TEXTO ────────────────────────────────────────────
+
+async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
 
+    bot   = context.bot
+    texto = update.message.text.strip()
+    esperando = _estado.get("aguardando_input")
 
-# --- COMANDOS ---
+    if not esperando:
+        return
+
+    # ── Cadastro de perfil ──
+    if esperando == "perfil_nome":
+        _estado["perfil"]["nome"] = texto
+        await msg(bot, f"✅ Nome: *{texto}*\n\nAgora seu @handle:")
+        _estado["aguardando_input"] = "perfil_handle"
+
+    elif esperando == "perfil_handle":
+        handle = texto if texto.startswith("@") else f"@{texto}"
+        _estado["perfil"]["handle"] = handle
+        await msg(bot, f"✅ Handle: *{handle}*\n\nURL da sua foto de perfil (ou 'pular'):")
+        _estado["aguardando_input"] = "perfil_foto"
+
+    elif esperando == "perfil_foto":
+        if texto.lower() not in ("pular", "skip", "-"):
+            _estado["perfil"]["foto_url"] = texto
+        salvar_perfil()
+        await msg(bot,
+            f"✅ Perfil salvo!\n"
+            f"Nome: {_estado['perfil']['nome']}\n"
+            f"Handle: {_estado['perfil']['handle']}\n\n"
+            f"Iniciando pipeline..."
+        )
+        _estado["aguardando_input"] = None
+        await iniciar_pipeline(bot)
+
+    # ── Tema para scraper ──
+    elif esperando == "tema_scraper":
+        _estado["aguardando_input"] = None
+        context.application.create_task(executar_scraper(bot, fonte=2, tema=texto))
+
+    # ── Link direto para scraper ──
+    elif esperando == "link_scraper":
+        _estado["aguardando_input"] = None
+        context.application.create_task(executar_scraper(bot, fonte=3, url=texto))
+
+    # ── Ajuste de copy ──
+    elif esperando == "copy_ajuste":
+        _estado["aguardando_input"] = None
+        partes = texto.lower().split()
+        slide_num = None
+        for i, p in enumerate(partes):
+            if p.isdigit():
+                slide_num = int(p)
+                break
+
+        if slide_num and _estado.get("copy_payload"):
+            await msg(bot, f"✏️ Ajustando slide {slide_num}...")
+            instrucao = texto
+            payload_atualizado = await asyncio.to_thread(
+                ajustar_slide, _estado["copy_payload"]["copy_aprovada"], slide_num, instrucao
+            )
+            _estado["copy_payload"]["copy_aprovada"] = payload_atualizado
+            await msg(bot, f"✅ Slide {slide_num} atualizado!\n\n{payload_atualizado.get('slides', [])[slide_num-1] if payload_atualizado.get('slides') else ''}")
+        else:
+            await msg(bot, "❌ Não encontrei o número do slide. Tente: \"slide 3 — mais agressivo\"")
+        return
+
+    # ── Troca de imagem ──
+    elif esperando == "image_troca":
+        _estado["aguardando_input"] = None
+        partes = texto.lower().split()
+        slide_num = None
+        for p in partes:
+            if p.isdigit():
+                slide_num = int(p)
+                break
+
+        if slide_num and _estado.get("image_payload"):
+            await msg(bot, f"🔄 Trocando imagem do slide {slide_num}...")
+            imagens = _estado["image_payload"].get("imagens_aprovadas", [])
+            imagens_novas = await asyncio.to_thread(trocar_imagem, imagens, slide_num, texto)
+            _estado["image_payload"]["imagens_aprovadas"] = imagens_novas
+
+            img = next((i for i in imagens_novas if i["slide_num"] == slide_num), {})
+            await msg(bot,
+                f"✅ Slide {slide_num} atualizado!\n"
+                f"Fonte: {img.get('fonte', '?')}\n"
+                f"{img.get('url', '—')}"
+            )
+        else:
+            await msg(bot, "❌ Não encontrei o número do slide. Tente: \"slide 3\"")
+        return
+
+    # ── Gestão da base de perfis ──
+    elif esperando == "base_adicionar":
+        _estado["aguardando_input"] = None
+        resultado = adicionar_perfil(texto)
+        await msg(bot, resultado["msg"])
+
+    elif esperando == "base_remover":
+        _estado["aguardando_input"] = None
+        resultado = remover_perfil(texto)
+        await msg(bot, resultado["msg"])
+
+
+# ── COMANDOS ─────────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
-    scheduler = context.bot_data.get("scheduler")
-    job = scheduler.get_job("wavy_pipeline") if scheduler else None
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M") if job else "-"
     await update.message.reply_text(
-        f"*Wavy Content Bot*\n\n"
-        f"/rodar - Executa o pipeline agora\n"
-        f"/status - Ver status\n"
-        f"/ajuda - Ver comandos\n\n"
-        f"Proxima execucao automatica:\n*{proxima}*",
+        "*Wavy Content Bot* 🌊\n\n"
+        "/rodar — Inicia o pipeline completo\n"
+        "/status — Ver status atual\n"
+        "/base — Gerenciar base de perfis\n"
+        "/ajuda — Todos os comandos\n\n"
+        "_Sistema de criação de conteúdo viral para Instagram_",
         parse_mode="Markdown"
     )
 
@@ -296,85 +674,123 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_rodar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
-    if _pipeline_running:
-        await update.message.reply_text("O pipeline ja esta rodando! Aguarde terminar.")
+    if _estado["rodando"]:
+        await update.message.reply_text("⏳ Pipeline já está rodando! Aguarde terminar.")
         return
-    await update.message.reply_text("Iniciando pipeline...")
-    context.application.create_task(run_full_pipeline())
+    _estado["rodando"] = True
+    carregar_perfil()
+    bot = context.bot
+    if not await verificar_perfil(bot):
+        return  # perfil sendo coletado via handle_texto
+    await iniciar_pipeline(bot)
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
-    scheduler = context.bot_data.get("scheduler")
-    job = scheduler.get_job("wavy_pipeline") if scheduler else None
-    proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M") if job else "-"
-    status_txt = "Rodando agora" if _pipeline_running else "Aguardando"
+    etapa = _estado.get("etapa_atual") or "aguardando"
+    rodando = "🔄 Rodando" if _estado["rodando"] else "⏸️ Aguardando"
+    perfil = _estado.get("perfil", {})
     await update.message.reply_text(
-        f"*Status do Sistema*\n\n"
-        f"Bot: Online\n"
-        f"Pipeline: {status_txt}\n"
-        f"Proxima execucao: *{proxima}*\n"
-        f"Agenda: Seg, Qua e Sex as 8h\n"
-        f"Temas vistos hoje: *{len(_shown_trend_titles)}*",
+        f"*Status do Pipeline*\n\n"
+        f"Bot: Online ✅\n"
+        f"Pipeline: {rodando}\n"
+        f"Etapa atual: *{etapa}*\n\n"
+        f"Perfil configurado: {'✅' if perfil.get('nome') else '❌'}\n"
+        f"Nome: {perfil.get('nome', '—')}\n"
+        f"Handle: {perfil.get('handle', '—')}",
         parse_mode="Markdown"
     )
+
+
+async def cmd_base(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
+        return
+    from agent1_viral_scraper import listar_perfis
+    info = listar_perfis()
+    perfis = info.get("perfis", [])
+    lista = "\n".join(perfis) if perfis else "_Base vazia_"
+    await update.message.reply_text(
+        f"📋 *Base de perfis* ({info['total']}/10)\n\n{lista}",
+        parse_mode="Markdown",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("➕ Adicionar perfil", callback_data="base_add"),
+                InlineKeyboardButton("➖ Remover perfil", callback_data="base_remove"),
+            ]
+        )
+    )
+
+
+async def cmd_cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
+        return
+    resetar_estado()
+    await update.message.reply_text("✅ Pipeline cancelado. Use /rodar para começar de novo.")
 
 
 async def cmd_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
     await update.message.reply_text(
-        "*Comandos disponIveis*\n\n"
-        "/rodar - Executa o pipeline agora\n"
-        "/status - Status do sistema\n"
-        "/start - Boas-vindas\n"
-        "/ajuda - Esta mensagem\n\n"
-        "_Roda automaticamente seg, qua e sex as 8h._",
+        "*Comandos disponíveis*\n\n"
+        "/rodar — Inicia o pipeline completo\n"
+        "/status — Ver etapa atual\n"
+        "/base — Gerenciar base de perfis\n"
+        "/cancelar — Cancela o pipeline atual\n"
+        "/ajuda — Esta mensagem\n\n"
+        "*Retomadas parciais:*\n"
+        "_\"refaz só a copy\"_ — pula para etapa 4\n"
+        "_\"troca as imagens\"_ — pula para etapa 5\n"
+        "_\"refaz o design com template B\"_ — pula para etapa 6",
         parse_mode="Markdown"
     )
 
 
-# --- MAIN ---
+# ── CALLBACK PARA BASE ────────────────────────────────────────────────────────
+
+async def handle_callback_base(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Extensão do handle_callback para gestão da base."""
+    query = update.callback_query
+    if query.message.chat.id != TELEGRAM_CHAT_ID:
+        return
+    await query.answer()
+    bot  = context.bot
+    data = query.data
+
+    if data == "base_add":
+        await msg(bot, "➕ Digite o @handle do perfil para adicionar:")
+        _estado["aguardando_input"] = "base_adicionar"
+    elif data == "base_remove":
+        await msg(bot, "➖ Digite o @handle do perfil para remover:")
+        _estado["aguardando_input"] = "base_remover"
+
+
+# ── MAIN ──────────────────────────────────────────────────────────────────────
 
 def main():
-    scheduler = AsyncIOScheduler(timezone="America/Sao_Paulo")
-    scheduler.add_job(
-        run_full_pipeline,
-        trigger=CronTrigger(
-            day_of_week="mon,wed,fri",
-            hour=8, minute=0,
-            timezone="America/Sao_Paulo"
-        ),
-        id="wavy_pipeline",
-        name="Wavy Content Pipeline",
-        replace_existing=True
-    )
+    carregar_perfil()
 
     async def post_init(app: Application):
-        scheduler.start()
-        app.bot_data["scheduler"] = scheduler
-
         await app.bot.set_my_commands([
-            BotCommand("rodar",  "Executar pipeline agora"),
-            BotCommand("status", "Ver status do sistema"),
-            BotCommand("ajuda",  "Ver todos os comandos"),
+            BotCommand("rodar",    "Iniciar pipeline completo"),
+            BotCommand("status",   "Ver status atual"),
+            BotCommand("base",     "Gerenciar base de perfis"),
+            BotCommand("cancelar", "Cancelar pipeline"),
+            BotCommand("ajuda",    "Ver todos os comandos"),
         ])
-
-        job = scheduler.get_job("wavy_pipeline")
-        proxima = job.next_run_time.strftime("%d/%m/%Y as %H:%M")
-        log.info(f"Sistema online - proxima execucao: {proxima}")
-
+        agora = datetime.now().strftime("%d/%m/%Y às %H:%M")
         await app.bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text=(
-                f"*Wavy Content Bot online!*\n\n"
-                f"Proxima execucao automatica: *{proxima}*\n\n"
-                f"/rodar para executar agora\n"
-                f"/status para ver o status"
+                f"*Wavy Content Bot online!* 🌊\n\n"
+                f"_{agora}_\n\n"
+                f"/rodar para iniciar o pipeline\n"
+                f"/ajuda para ver todos os comandos"
             ),
             parse_mode="Markdown"
         )
+        log.info("Wavy Pipeline Master online.")
 
     app = (
         Application.builder()
@@ -383,13 +799,22 @@ def main():
         .build()
     )
 
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("rodar",  cmd_rodar))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("ajuda",  cmd_ajuda))
+    # Comandos
+    app.add_handler(CommandHandler("start",    cmd_start))
+    app.add_handler(CommandHandler("rodar",    cmd_rodar))
+    app.add_handler(CommandHandler("status",   cmd_status))
+    app.add_handler(CommandHandler("base",     cmd_base))
+    app.add_handler(CommandHandler("cancelar", cmd_cancelar))
+    app.add_handler(CommandHandler("ajuda",    cmd_ajuda))
+
+    # Callbacks
+    app.add_handler(CallbackQueryHandler(handle_callback_base, pattern="^base_"))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    log.info("Iniciando bot com run_polling...")
+    # Mensagens de texto (inputs do usuário)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_texto))
+
+    log.info("Iniciando bot com polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
