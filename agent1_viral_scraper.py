@@ -7,6 +7,7 @@ estruturado para o pipeline.
 
 import os
 import json
+import time
 import base64
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,6 +96,47 @@ def run_apify_actor(actor_id: str, input_data: dict, timeout: int = 120) -> list
     except Exception as e:
         print(f"[APIFY] Erro ao chamar {actor_id}: {e}")
         return []
+
+
+def _start_run(actor_id: str, input_data: dict) -> str | None:
+    """Inicia um actor run assíncrono e retorna o runId."""
+    actor_slug = actor_id.replace("/", "~")
+    url = f"https://api.apify.com/v2/acts/{actor_slug}/runs"
+    try:
+        resp = requests.post(url, json=input_data,
+                             params={"token": APIFY_API_KEY}, timeout=20)
+        resp.raise_for_status()
+        return resp.json()["data"]["id"]
+    except Exception as e:
+        print(f"[APIFY] Erro ao iniciar run {actor_id}: {e}")
+        return None
+
+
+def _collect_run(run_id: str, handle: str, timeout: int = 180) -> list[dict]:
+    """Aguarda conclusão de um run e retorna os posts com _perfil_origem."""
+    url_status = f"https://api.apify.com/v2/actor-runs/{run_id}"
+    url_items  = f"https://api.apify.com/v2/actor-runs/{run_id}/dataset/items"
+    params = {"token": APIFY_API_KEY}
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        try:
+            status = requests.get(url_status, params=params, timeout=15).json()["data"]["status"]
+            if status == "SUCCEEDED":
+                items = requests.get(url_items, params=params, timeout=15).json()
+                for item in items:
+                    item["_perfil_origem"] = handle
+                print(f"[SCRAPER] {handle}: {len(items)} posts recebidos")
+                return items
+            elif status in ("FAILED", "ABORTED", "TIMED-OUT"):
+                print(f"[SCRAPER] {handle}: run terminou com {status}")
+                return []
+        except Exception as e:
+            print(f"[SCRAPER] {handle}: erro no poll — {e}")
+        time.sleep(5)
+
+    print(f"[SCRAPER] {handle}: timeout no poll após {timeout}s")
+    return []
 
 
 # ── OCR ─────────────────────────────────────────────────────────────────────
@@ -326,62 +368,56 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def _scrape_perfil(handle: str, num_posts: int, cutoff: datetime) -> list[dict]:
-    """Busca posts de um único perfil (usada em paralelo)."""
-    username = handle.lstrip("@")
-    results = run_apify_actor(
-        "apify/instagram-reel-scraper",
-        {"username": [username], "maxItems": 10},
-        timeout=60
-    )
-    if not results:
-        print(f"[SCRAPER] {handle}: sem retorno do Apify")
-        return []
-
-    recentes = []
-    todos_do_perfil = []
-    for item in results:
-        item["_perfil_origem"] = handle
-        todos_do_perfil.append(item)
-        ts = item.get("timestamp") or item.get("takenAtTimestamp")
-        if ts:
-            try:
-                post_date = (
-                    datetime.utcfromtimestamp(ts)
-                    if isinstance(ts, (int, float))
-                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-                )
-                if post_date >= cutoff:
-                    recentes.append(item)
-            except Exception:
-                recentes.append(item)
-        else:
-            recentes.append(item)
-
-    selecionados = (recentes if recentes else todos_do_perfil)[:num_posts]
-    print(f"[SCRAPER] {handle}: {len(selecionados)} posts selecionados (de {len(results)} retornados)")
-    return selecionados
-
-
 def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10) -> list[dict]:
-    """Busca perfis em paralelo — últimos 5 dias, top 10 por engajamento."""
+    """2 fases: inicia todos os runs → coleta em paralelo. Últimos 5 dias, top 10."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
 
     cutoff = datetime.utcnow() - timedelta(days=5)
-    todos_posts = []
 
-    print(f"[SCRAPER] Buscando {len(perfis)} perfis em paralelo ({max_workers} workers)...")
+    # Fase 1: inicia todos os runs (não-bloqueante no Apify)
+    print(f"[SCRAPER] Iniciando {len(perfis)} runs...")
+    run_map: dict[str, str] = {}  # run_id → handle
+    for handle in perfis:
+        username = handle.lstrip("@")
+        run_id = _start_run("apify/instagram-reel-scraper",
+                            {"username": [username], "maxItems": num_posts})
+        if run_id:
+            run_map[run_id] = handle
+        time.sleep(0.5)  # delay mínimo para não sobrecarregar a API
+
+    if not run_map:
+        return []
+
+    print(f"[SCRAPER] {len(run_map)} runs iniciados. Aguardando resultados...")
+
+    # Fase 2: coleta todos em paralelo via polling
+    todos_posts: list[dict] = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
-            executor.submit(_scrape_perfil, handle, num_posts, cutoff): handle
-            for handle in perfis
+            executor.submit(_collect_run, run_id, handle): handle
+            for run_id, handle in run_map.items()
         }
         for future in as_completed(futures):
             handle = futures[future]
             try:
-                todos_posts.extend(future.result())
+                items = future.result()
+                for item in items:
+                    ts = item.get("timestamp") or item.get("takenAtTimestamp")
+                    if ts:
+                        try:
+                            post_date = (
+                                datetime.utcfromtimestamp(ts)
+                                if isinstance(ts, (int, float))
+                                else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                            )
+                            if post_date >= cutoff:
+                                todos_posts.append(item)
+                                continue
+                        except Exception:
+                            pass
+                    todos_posts.append(item)  # sem timestamp → inclui sempre
             except Exception as e:
                 print(f"[SCRAPER] Falha em {handle}: {e}")
 
