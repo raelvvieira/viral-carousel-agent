@@ -58,9 +58,9 @@ _estado = {
     "image_payload": None,
     "template": "A",
     "perfil": {
-        "nome": None,
-        "handle": None,
-        "foto_url": None
+        "nome": "wavy",
+        "handle": "@wavy.mkt",
+        "foto_url": "https://i.ibb.co/bMtB5PZL/488223687-8876273612474124-8754739128155263998-n.jpg"
     },
     "aguardando_input": None,  # chave do input esperado
 }
