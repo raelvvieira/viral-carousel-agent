@@ -173,6 +173,7 @@ async def executar_scraper(bot: Bot, fonte: int, **kwargs):
                 [InlineKeyboardButton("🔄 Tentar outra fonte", callback_data="scraper_retry")]
             ])
         )
+        _estado["rodando"] = False
         _estado["etapa_atual"] = None
         return
 
