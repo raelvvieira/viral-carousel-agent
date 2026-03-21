@@ -166,30 +166,32 @@ async def executar_scraper(bot: Bot, fonte: int, **kwargs):
 
     posts = resultado.get("posts", [])
     if not posts:
-        await msg(bot,
-            "😕 Nenhum post encontrado com essa fonte.\n\n"
-            "Quer tentar outra?"
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="😕 Nenhum post encontrado com essa fonte. Quer tentar outra?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Tentar outra fonte", callback_data="scraper_retry")]
+            ])
         )
-        await iniciar_pipeline(bot)
+        _estado["etapa_atual"] = None
         return
 
     _estado["etapa_atual"] = "escolha_post"
+    _estado["total_posts_disponiveis"] = len(posts)
     ranking = resultado.get("ranking_txt", "")
     await msg(bot, ranking)
 
-    # Botões de escolha (máx 5)
-    botoes = [
-        InlineKeyboardButton(f"#{i+1}", callback_data=f"post_{i}")
-        for i in range(min(5, len(posts)))
-    ]
-    botoes_linhas = [botoes[:3], botoes[3:]] if len(botoes) > 3 else [botoes]
-    botoes_linhas.append([InlineKeyboardButton("🔄 Buscar outros", callback_data="scraper_retry")])
-
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text="Qual post quer analisar como referência?",
-        reply_markup=InlineKeyboardMarkup(botoes_linhas)
+        text=(
+            f"Qual post quer analisar como referência?\n"
+            f"Digite o número (1 a {len(posts)}) ou pressione Buscar outros:"
+        ),
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Buscar outros", callback_data="scraper_retry")]
+        ])
     )
+    _estado["aguardando_input"] = "escolha_post"
 
 
 async def analisar_post_escolhido(bot: Bot, post_index: int):
@@ -584,6 +586,23 @@ async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         _estado["aguardando_input"] = None
         await iniciar_pipeline(bot)
+
+    # ── Escolha de post por número de texto ──
+    elif esperando == "escolha_post":
+        # aceita "3", "#3", "post 3", etc.
+        numero = None
+        for token in texto.replace("#", " ").split():
+            if token.isdigit():
+                numero = int(token)
+                break
+
+        total = _estado.get("total_posts_disponiveis", 10)
+        if numero and 1 <= numero <= total:
+            _estado["aguardando_input"] = None
+            context.application.create_task(analisar_post_escolhido(bot, numero - 1))
+        else:
+            await msg(bot, f"❌ Digite um número entre 1 e {total}. Ex: `5`")
+        return
 
     # ── Tema para scraper ──
     elif esperando == "tema_scraper":

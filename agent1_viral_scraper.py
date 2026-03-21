@@ -123,32 +123,50 @@ def ocr_imagem(image_url: str) -> str:
 
 
 def extrair_copy_reel(item: dict) -> dict:
-    """Transcreve reel via Apify instagram-reel-analyzer."""
-    url = item.get("url") or item.get("shortCode") or ""
+    """Transcreve reel via Apify instagram-reel-analyzer + usa legenda como fallback."""
+    # Constrói URL completa do reel para o actor de transcrição
+    url_direta = item.get("url") or ""
+    short_code = item.get("shortCode") or item.get("code") or ""
+    if not url_direta and short_code:
+        url_direta = f"https://www.instagram.com/reel/{short_code}/"
+
     transcricao = ""
     status_transcricao = "ausente"
-    if url:
-        results = run_apify_actor(
-            "electrifying_haircut/instagram-reel-analyzer",
-            {"reelUrls": [url]}
-        )
-        if results:
-            transcricao = results[0].get("transcript") or results[0].get("transcription") or ""
-            status_transcricao = "ok" if transcricao else "ausente"
+    if url_direta:
+        try:
+            results = run_apify_actor(
+                "electrifying_haircut/instagram-reel-analyzer",
+                {"reelUrls": [url_direta]},
+                timeout=60
+            )
+            if results:
+                transcricao = (
+                    results[0].get("transcript") or
+                    results[0].get("transcription") or
+                    results[0].get("text") or ""
+                )
+                status_transcricao = "ok" if transcricao else "sem_fala_detectada"
+        except Exception as e:
+            print(f"[COPY] Transcrição falhou ({e}), usando só legenda.")
+            status_transcricao = "erro_api"
 
-    legenda = item.get("caption") or item.get("text") or ""
+    legenda = item.get("caption") or item.get("text") or item.get("description") or ""
     copy_consolidada = "\n\n".join(filter(None, [transcricao, legenda]))
+
     return {
         "transcricao": transcricao,
         "legenda": legenda,
         "hashtags": item.get("hashtags", []),
-        "copy_consolidada": copy_consolidada,
+        "copy_consolidada": copy_consolidada or "(sem texto detectado)",
         "status": {
             "legenda": "ok" if legenda else "ausente",
             "transcricao": status_transcricao,
             "ocr": None
         },
-        "video_url_para_transcricao_manual": item.get("videoUrl") or item.get("video_url") if not transcricao else None
+        "video_url_para_transcricao_manual": (
+            item.get("videoUrl") or item.get("video_url") or url_direta
+            if not transcricao else None
+        )
     }
 
 
