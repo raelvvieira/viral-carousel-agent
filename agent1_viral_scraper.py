@@ -17,6 +17,19 @@ GOOGLE_VISION_KEY = os.getenv("GOOGLE_VISION_API_KEY")
 # Base de perfis gerenciada em memória (persistida via arquivo entre runs)
 BASE_PERFIS_PATH = "/tmp/wavy_base_perfis.json"
 
+PERFIS_DEFAULT = [
+    "@brmetaverso",
+    "@noevarner.ai",
+    "@kylewhitrow",
+    "@paidotrafego",
+    "@pedrosobral",
+    "@caduneiva",
+    "@g4.business",
+    "@v4company",
+    "@nateherkai",
+    "@oreidotrafego",
+]
+
 
 # ── UTILS ───────────────────────────────────────────────────────────────────
 
@@ -25,7 +38,8 @@ def carregar_base_perfis() -> list[str]:
         with open(BASE_PERFIS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return []
+        salvar_base_perfis(PERFIS_DEFAULT)
+        return PERFIS_DEFAULT
 
 
 def salvar_base_perfis(perfis: list[str]):
