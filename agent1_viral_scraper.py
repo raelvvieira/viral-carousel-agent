@@ -308,25 +308,43 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
 def scrape_base_perfis(num_posts: int = 5) -> list[dict]:
-    """Minera os perfis da base — últimos 5 dias, todos os tipos."""
+    """Minera os perfis da base — últimos 30 dias, ordena por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
 
+    usernames = [h.lstrip("@") for h in perfis]
+    cutoff = datetime.utcnow() - timedelta(days=30)
+
+    # Busca todos os perfis em uma única chamada (actor aceita lista)
+    results = run_apify_actor(
+        "apify/instagram-reel-scraper",
+        {
+            "username": usernames,
+            "maxItems": num_posts
+        },
+        timeout=180
+    )
+
     todos_posts = []
-    for handle in perfis:
-        username = handle.lstrip("@")
-        results = run_apify_actor(
-            "apify/instagram-post-scraper",
-            {
-                "usernames": [username],
-                "resultsLimit": num_posts,
-                "onlyPostsNewerThan": "5 days"
-            }
-        )
-        for item in results:
-            item["_perfil_origem"] = handle
-        todos_posts.extend(results)
+    for item in results:
+        # Filtro de data manual — últimos 30 dias
+        ts = item.get("timestamp") or item.get("takenAtTimestamp")
+        if ts:
+            try:
+                post_date = (
+                    datetime.utcfromtimestamp(ts)
+                    if isinstance(ts, (int, float))
+                    else datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                )
+                if post_date < cutoff:
+                    continue
+            except Exception:
+                pass
+
+        autor = item.get("ownerUsername") or item.get("username") or ""
+        item["_perfil_origem"] = f"@{autor}" if autor else "?"
+        todos_posts.append(item)
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
     return todos_posts[:20]
