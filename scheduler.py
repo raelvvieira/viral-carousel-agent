@@ -250,7 +250,7 @@ def _formatar_copy_completa(post: dict) -> list[str]:
     if slides:
         slides_txt = "\n".join(
             f"*Slide {i+1}:* {s}" if isinstance(s, str) else
-            f"*Slide {i+1}:* {s.get('titulo','')}\n{s.get('corpo','')}"
+            f"*Slide {i+1}:* {s.get('texto','')}"
             for i, s in enumerate(slides)
         )
         blocos.append(f"📑 *Slides:*\n{slides_txt}")
@@ -275,103 +275,113 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
         "post_estatico": ("🖼️ Post único", "lendo texto da imagem via OCR", "5–10s"),
     }
 
-    # Pega o tipo do post direto do cache (sem chamar API nenhuma)
-    tipo_detectado = "?"
-    num_slides = 0
     try:
-        with open("/tmp/wavy_viral_posts.json", "r", encoding="utf-8") as f:
-            posts_cache = json.load(f)
-        if 0 <= post_index < len(posts_cache):
-            item = posts_cache[post_index]
-            tipo_raw = (item.get("type") or item.get("productType") or "").lower()
-            if "video" in tipo_raw or "reel" in tipo_raw:
-                tipo_detectado = "reel"
-            elif "sidecar" in tipo_raw or "carousel" in tipo_raw:
-                tipo_detectado = "carrossel"
-                slides = item.get("childPosts") or item.get("sidecarChildren") or []
-                num_slides = len(slides)
-            else:
-                tipo_detectado = "post_estatico"
-    except Exception:
-        pass
+        # Pega o tipo do post direto do cache (sem chamar API nenhuma)
+        tipo_detectado = "?"
+        num_slides = 0
+        try:
+            with open("/tmp/wavy_viral_posts.json", "r", encoding="utf-8") as f:
+                posts_cache = json.load(f)
+            if 0 <= post_index < len(posts_cache):
+                item = posts_cache[post_index]
+                tipo_raw = (item.get("type") or item.get("productType") or "").lower()
+                if "video" in tipo_raw or "reel" in tipo_raw:
+                    tipo_detectado = "reel"
+                elif "sidecar" in tipo_raw or "carousel" in tipo_raw:
+                    tipo_detectado = "carrossel"
+                    slides = item.get("childPosts") or item.get("sidecarChildren") or []
+                    num_slides = len(slides)
+                else:
+                    tipo_detectado = "post_estatico"
+        except Exception:
+            pass
 
-    emoji, acao, tempo = tipo_label.get(tipo_detectado, ("🔬", "extraindo copy", "30s"))
-    detalhe = f" ({num_slides} slides)" if tipo_detectado == "carrossel" and num_slides else ""
+        emoji, acao, tempo = tipo_label.get(tipo_detectado, ("🔬", "extraindo copy", "30s"))
+        detalhe = f" ({num_slides} slides)" if tipo_detectado == "carrossel" and num_slides else ""
 
-    await msg(bot,
-        f"🔬 *Post #{post_index + 1} selecionado* — {emoji}{detalhe}\n\n"
-        f"⏳ {acao}...\n"
-        f"_Tempo estimado: {tempo} — aguarde_"
-    )
-
-    try:
-        payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
-    except Exception as e:
-        await msg(bot, f"❌ Erro ao analisar post: {str(e)[:200]}")
-        return
-
-    if "erro" in payload:
-        await msg(bot, f"❌ {payload['erro']}")
-        return
-
-    _estado["viral_payload"] = payload
-    post = payload.get("post_viral", {})
-
-    tipo_final = post.get("tipo", tipo_detectado)
-    _, acao_final, _ = tipo_label.get(tipo_final, ("🔬", tipo_final, ""))
-    await msg(bot, f"✅ *Copy extraída com sucesso!* _{acao_final.replace('indo', 'ída').replace('lendo', 'lida')}_\n\nAqui está tudo que foi capturado:")
-
-    # Envia copy completa sem truncar nada
-    for parte in _formatar_copy_completa(post):
-        await msg(bot, parte)
-
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text="A copy captada está completa?",
-        reply_markup=kb(
-            [
-                InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
-                InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
-            ],
-            [
-                InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
-            ]
+        await msg(bot,
+            f"🔬 *Post #{post_index + 1} selecionado* — {emoji}{detalhe}\n\n"
+            f"⏳ {acao}...\n"
+            f"_Tempo estimado: {tempo} — aguarde_"
         )
-    )
+
+        try:
+            payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
+        except Exception as e:
+            await msg(bot, f"❌ Erro ao analisar post: {str(e)[:200]}")
+            return
+
+        if "erro" in payload:
+            await msg(bot, f"❌ {payload['erro']}")
+            return
+
+        _estado["viral_payload"] = payload
+        post = payload.get("post_viral", {})
+
+        tipo_final = post.get("tipo", tipo_detectado)
+        _, acao_final, _ = tipo_label.get(tipo_final, ("🔬", tipo_final, ""))
+        await msg(bot, f"✅ *Copy extraída com sucesso!* _{acao_final.replace('indo', 'ída').replace('lendo', 'lida')}_\n\nAqui está tudo que foi capturado:")
+
+        # Envia copy completa sem truncar nada
+        for parte in _formatar_copy_completa(post):
+            await msg(bot, parte)
+
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="A copy captada está completa?",
+            reply_markup=kb(
+                [
+                    InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                    InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
+                ],
+                [
+                    InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
+                ]
+            )
+        )
+
+    except Exception as e:
+        log.error(f"[PIPELINE] Erro em analisar_post_escolhido: {e}", exc_info=True)
+        await msg(bot, f"❌ Erro inesperado ao processar post #{post_index + 1}: {str(e)[:200]}\n\nTente outro post ou use /cancelar.")
 
 
 async def analisar_post_escolhido_retry(bot: Bot, post_index: int):
     """Releitura da copy do post (chamada apenas na 2ª tentativa)."""
     try:
-        payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
-    except Exception as e:
-        await msg(bot, f"❌ Erro ao reler post: {str(e)[:200]}")
-        return
+        try:
+            payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
+        except Exception as e:
+            await msg(bot, f"❌ Erro ao reler post: {str(e)[:200]}")
+            return
 
-    if "erro" in payload:
-        await msg(bot, f"❌ {payload['erro']}")
-        return
+        if "erro" in payload:
+            await msg(bot, f"❌ {payload['erro']}")
+            return
 
-    _estado["viral_payload"] = payload
-    post = payload.get("post_viral", {})
+        _estado["viral_payload"] = payload
+        post = payload.get("post_viral", {})
 
-    await msg(bot, "🔄 *Releitura concluída — nova copy captada:*")
-    for parte in _formatar_copy_completa(post):
-        await msg(bot, parte)
+        await msg(bot, "🔄 *Releitura concluída — nova copy captada:*")
+        for parte in _formatar_copy_completa(post):
+            await msg(bot, parte)
 
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text="Agora a copy está completa?",
-        reply_markup=kb(
-            [
-                InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
-                InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
-            ],
-            [
-                InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
-            ]
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="Agora a copy está completa?",
+            reply_markup=kb(
+                [
+                    InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                    InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
+                ],
+                [
+                    InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
+                ]
+            )
         )
-    )
+
+    except Exception as e:
+        log.error(f"[PIPELINE] Erro em analisar_post_escolhido_retry: {e}", exc_info=True)
+        await msg(bot, f"❌ Erro inesperado na releitura: {str(e)[:200]}\n\nTente outro post ou use /cancelar.")
 
 
 # ── ETAPA 2: RESEARCH AGENT ──────────────────────────────────────────────────
