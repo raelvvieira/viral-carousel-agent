@@ -203,17 +203,30 @@ async def executar_scraper(bot: Bot, fonte: int, **kwargs):
     ranking = resultado.get("ranking_txt", "")
     await msg(bot, ranking, parse_mode=None)
 
+    # Gera um botão por post (até 10), 2 por linha
+    linhas_botoes = []
+    for i, post in enumerate(posts[:10]):
+        tipo_raw = (post.get("type") or post.get("productType") or "").lower()
+        if "video" in tipo_raw or "reel" in tipo_raw:
+            emoji = "📹"
+        elif "sidecar" in tipo_raw or "carousel" in tipo_raw:
+            emoji = "📑"
+        else:
+            emoji = "🖼️"
+        autor = (post.get("ownerUsername") or post.get("username") or "?")[:12]
+        btn = InlineKeyboardButton(f"#{i+1} {emoji} @{autor}", callback_data=f"post_{i}")
+        if i % 2 == 0:
+            linhas_botoes.append([btn])
+        else:
+            linhas_botoes[-1].append(btn)
+
+    linhas_botoes.append([InlineKeyboardButton("🔄 Buscar outros", callback_data="scraper_retry")])
+
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text=(
-            f"Qual post quer analisar como referência?\n"
-            f"Digite o número (1 a {len(posts)}) ou pressione Buscar outros:"
-        ),
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Buscar outros", callback_data="scraper_retry")]
-        ])
+        text="Qual post quer usar como referência?",
+        reply_markup=InlineKeyboardMarkup(linhas_botoes)
     )
-    _estado["aguardando_input"] = "escolha_post"
 
 
 def _formatar_copy_completa(post: dict) -> list[str]:
@@ -782,23 +795,6 @@ async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         _estado["aguardando_input"] = None
         await iniciar_pipeline(bot)
-
-    # ── Escolha de post por número de texto ──
-    elif esperando == "escolha_post":
-        # aceita "3", "#3", "post 3", etc.
-        numero = None
-        for token in texto.replace("#", " ").split():
-            if token.isdigit():
-                numero = int(token)
-                break
-
-        total = _estado.get("total_posts_disponiveis", 10)
-        if numero and 1 <= numero <= total:
-            _estado["aguardando_input"] = None
-            context.application.create_task(analisar_post_escolhido(bot, numero - 1))
-        else:
-            await msg(bot, f"❌ Digite um número entre 1 e {total}. Ex: `5`")
-        return
 
     # ── Tema para scraper ──
     elif esperando == "tema_scraper":
