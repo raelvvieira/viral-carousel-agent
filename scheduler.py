@@ -331,7 +331,7 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
             text="A copy captada está completa?",
             reply_markup=kb(
                 [
-                    InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                    InlineKeyboardButton("✅ Copy ok — iniciar pesquisa", callback_data="copy_leitura_ok"),
                     InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
                 ],
                 [
@@ -342,6 +342,7 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
 
     except Exception as e:
         log.error(f"[PIPELINE] Erro em analisar_post_escolhido: {e}", exc_info=True)
+        _estado["rodando"] = False
         await msg(bot, f"❌ Erro inesperado ao processar post #{post_index + 1}: {str(e)[:200]}\n\nTente outro post ou use /cancelar.")
 
 
@@ -370,7 +371,7 @@ async def analisar_post_escolhido_retry(bot: Bot, post_index: int):
             text="Agora a copy está completa?",
             reply_markup=kb(
                 [
-                    InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                    InlineKeyboardButton("✅ Copy ok — iniciar pesquisa", callback_data="copy_leitura_ok"),
                     InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
                 ],
                 [
@@ -388,47 +389,55 @@ async def analisar_post_escolhido_retry(bot: Bot, post_index: int):
 
 async def executar_research(bot: Bot):
     """Roda o Research Agent e apresenta o briefing."""
-    _estado["etapa_atual"] = "research"
-    await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 5 buscas estratégicas sobre o tema...\n_(pode levar ~1 min)_")
     try:
-        payload = await asyncio.to_thread(run_research, _estado["viral_payload"])
-    except Exception as e:
-        await msg(bot, f"❌ Erro no Research: {str(e)[:200]}")
-        return
+        _estado["etapa_atual"] = "research"
+        await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 5 buscas estratégicas sobre o tema...\n_(pode levar ~1 min)_")
+        try:
+            payload = await asyncio.to_thread(run_research, _estado["viral_payload"])
+        except Exception as e:
+            _estado["rodando"] = False
+            await msg(bot, f"❌ Erro no Research: {str(e)[:200]}\n\nUse /cancelar para reiniciar.")
+            return
 
-    if "erro" in payload:
-        await msg(bot, f"❌ {payload['erro']}")
-        return
+        if "erro" in payload:
+            _estado["rodando"] = False
+            await msg(bot, f"❌ {payload['erro']}\n\nUse /cancelar para reiniciar.")
+            return
 
-    _estado["briefing_payload"] = payload
-    briefing = payload.get("briefing_pesquisa", {})
-    briefing_txt = briefing.get("briefing_formatado", "Briefing gerado.")
-    buscas = briefing.get("buscas_realizadas", 0)
-    urls = briefing.get("urls_profundidade", [])
+        _estado["briefing_payload"] = payload
+        briefing = payload.get("briefing_pesquisa", {})
+        briefing_txt = briefing.get("briefing_formatado", "Briefing gerado.")
+        buscas = briefing.get("buscas_realizadas", 0)
+        urls = briefing.get("urls_profundidade", [])
 
-    # Monta bloco de URLs de profundidade
-    urls_txt = ""
-    if urls:
-        urls_txt = "\n\n🔗 *Fontes usadas nas buscas:*\n" + "\n".join(f"• {u}" for u in urls if u)
+        # Monta bloco de URLs de profundidade
+        urls_txt = ""
+        if urls:
+            urls_txt = "\n\n🔗 *Fontes usadas nas buscas:*\n" + "\n".join(f"• {u}" for u in urls if u)
 
-    await msg(bot,
-        f"📋 *Briefing de Pesquisa pronto!*\n\n"
-        f"_{buscas} buscas realizadas_\n\n"
-        f"{briefing_txt[:3000]}"
-        f"{urls_txt}\n\n"
-        f"─────────────────────────\n"
-        f"Aprovado?"
-    )
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text="Próxima etapa:",
-        reply_markup=kb(
-            [
-                InlineKeyboardButton("✅ Aprovado — escolher formato", callback_data="briefing_ok"),
-                InlineKeyboardButton("🔄 Refazer pesquisa", callback_data="research_retry"),
-            ]
+        await msg(bot,
+            f"📋 *Briefing de Pesquisa pronto!*\n\n"
+            f"_{buscas} buscas realizadas_\n\n"
+            f"{briefing_txt[:3000]}"
+            f"{urls_txt}\n\n"
+            f"─────────────────────────\n"
+            f"Aprovado?"
         )
-    )
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text="Próxima etapa:",
+            reply_markup=kb(
+                [
+                    InlineKeyboardButton("✅ Aprovado — escolher formato", callback_data="briefing_ok"),
+                    InlineKeyboardButton("🔄 Refazer pesquisa", callback_data="research_retry"),
+                ]
+            )
+        )
+
+    except Exception as e:
+        log.error(f"[PIPELINE] Erro em executar_research: {e}", exc_info=True)
+        _estado["rodando"] = False
+        await msg(bot, f"❌ Erro inesperado na pesquisa: {str(e)[:200]}\n\nUse /cancelar para reiniciar.")
 
 
 # ── ETAPA 3: ESCOLHA DO FORMATO ──────────────────────────────────────────────
@@ -470,11 +479,13 @@ async def executar_copy(bot: Bot):
             run_copy_agent, _estado["briefing_payload"], fmt, num
         )
     except Exception as e:
-        await msg(bot, f"❌ Erro na Copy: {str(e)[:200]}")
+        _estado["rodando"] = False
+        await msg(bot, f"❌ Erro na Copy: {str(e)[:200]}\n\nUse /cancelar para reiniciar.")
         return
 
     if "erro" in payload:
-        await msg(bot, f"❌ {payload['erro']}")
+        _estado["rodando"] = False
+        await msg(bot, f"❌ {payload['erro']}\n\nUse /cancelar para reiniciar.")
         return
 
     _estado["copy_payload"] = payload
@@ -538,11 +549,13 @@ async def executar_images(bot: Bot):
     try:
         payload = await asyncio.to_thread(run_image_agent, _estado["copy_payload"])
     except Exception as e:
-        await msg(bot, f"❌ Erro no Image Agent: {str(e)[:200]}")
+        _estado["rodando"] = False
+        await msg(bot, f"❌ Erro no Image Agent: {str(e)[:200]}\n\nUse /cancelar para reiniciar.")
         return
 
     if "erro" in payload:
-        await msg(bot, f"❌ {payload['erro']}")
+        _estado["rodando"] = False
+        await msg(bot, f"❌ {payload['erro']}\n\nUse /cancelar para reiniciar.")
         return
 
     _estado["image_payload"] = payload
