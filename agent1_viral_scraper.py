@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 
 APIFY_API_KEY     = os.getenv("APIFY_API_KEY")
 GOOGLE_VISION_KEY = os.getenv("GOOGLE_VISION_API_KEY")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
 
 # Base de perfis persistida no diretório do projeto
 BASE_PERFIS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wavy_base_perfis.json")
@@ -135,10 +136,15 @@ def extrair_copy_reel(item: dict) -> dict:
     status_transcricao = "ausente"
     if url_direta:
         try:
+            actor_input = {
+                "reelUrls": [url_direta],
+                "includeTranscription": True,
+                "openaiApiKey": OPENAI_API_KEY or "",
+            }
             results = run_apify_actor(
                 "electrifying_haircut/instagram-reel-analyzer",
-                {"reelUrls": [url_direta]},
-                timeout=90
+                actor_input,
+                timeout=180
             )
             if results:
                 transcricao = (
