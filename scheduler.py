@@ -270,11 +270,39 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
     _estado["copy_retry_usado"] = False
 
     tipo_label = {
-        "reel": "Reel — transcrição de áudio",
-        "carrossel": "Carrossel — OCR slides",
-        "post_estatico": "Post único — OCR imagem",
+        "reel": ("📹 Reel", "transcrevendo áudio via API", "30–60s"),
+        "carrossel": ("📑 Carrossel", "lendo cada slide via OCR", "20–40s"),
+        "post_estatico": ("🖼️ Post único", "lendo texto da imagem via OCR", "5–10s"),
     }
-    await msg(bot, f"🔬 Analisando post #{post_index + 1}...\n_{tipo_label.get('?', 'extração de copy')}_")
+
+    # Pega o tipo do post direto do cache (sem chamar API nenhuma)
+    tipo_detectado = "?"
+    num_slides = 0
+    try:
+        with open("/tmp/wavy_viral_posts.json", "r", encoding="utf-8") as f:
+            posts_cache = json.load(f)
+        if 0 <= post_index < len(posts_cache):
+            item = posts_cache[post_index]
+            tipo_raw = (item.get("type") or item.get("productType") or "").lower()
+            if "video" in tipo_raw or "reel" in tipo_raw:
+                tipo_detectado = "reel"
+            elif "sidecar" in tipo_raw or "carousel" in tipo_raw:
+                tipo_detectado = "carrossel"
+                slides = item.get("childPosts") or item.get("sidecarChildren") or []
+                num_slides = len(slides)
+            else:
+                tipo_detectado = "post_estatico"
+    except Exception:
+        pass
+
+    emoji, acao, tempo = tipo_label.get(tipo_detectado, ("🔬", "extraindo copy", "30s"))
+    detalhe = f" ({num_slides} slides)" if tipo_detectado == "carrossel" and num_slides else ""
+
+    await msg(bot,
+        f"🔬 *Post #{post_index + 1} selecionado* — {emoji}{detalhe}\n\n"
+        f"⏳ {acao}...\n"
+        f"_Tempo estimado: {tempo} — aguarde_"
+    )
 
     try:
         payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
@@ -289,10 +317,9 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
     _estado["viral_payload"] = payload
     post = payload.get("post_viral", {})
 
-    # Detecta o tipo agora para label correto
-    tipo = post.get("tipo", "?")
-    label = tipo_label.get(tipo, tipo)
-    await msg(bot, f"✅ *Copy extraída via {label}:*")
+    tipo_final = post.get("tipo", tipo_detectado)
+    _, acao_final, _ = tipo_label.get(tipo_final, ("🔬", tipo_final, ""))
+    await msg(bot, f"✅ *Copy extraída com sucesso!* _{acao_final.replace('indo', 'ída').replace('lendo', 'lida')}_\n\nAqui está tudo que foi capturado:")
 
     # Envia copy completa sem truncar nada
     for parte in _formatar_copy_completa(post):
