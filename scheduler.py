@@ -63,6 +63,8 @@ _estado = {
         "foto_url": "https://i.ibb.co/bMtB5PZL/488223687-8876273612474124-8754739128155263998-n.jpg"
     },
     "aguardando_input": None,  # chave do input esperado
+    "post_index_atual": None,  # índice do post selecionado (para retry de copy)
+    "copy_retry_usado": False, # True após primeira releitura (só 1 retry permitido)
 }
 
 _perfil_path = "/tmp/wavy_perfil.json"
@@ -104,6 +106,7 @@ def resetar_estado():
         "formato": None, "num_slides": 7,
         "copy_payload": None, "image_payload": None,
         "template": "A", "aguardando_input": None,
+        "post_index_atual": None, "copy_retry_usado": False,
     })
 
 
@@ -213,9 +216,66 @@ async def executar_scraper(bot: Bot, fonte: int, **kwargs):
     _estado["aguardando_input"] = "escolha_post"
 
 
+def _formatar_copy_completa(post: dict) -> list[str]:
+    """
+    Monta a copy completa do post em blocos de texto.
+    Retorna lista de strings prontas para enviar (já particionadas pelo limite do Telegram).
+    """
+    copy = post.get("copy", {})
+    tipo = post.get("tipo", "")
+    metricas = post.get("metricas", {})
+
+    cabecalho = (
+        f"📌 *{post.get('autor', '?')}*  ·  {tipo.upper()}\n"
+        f"📊 {metricas.get('likes', 0)} likes · {metricas.get('views', 0)} views · "
+        f"{metricas.get('engajamento_pct', 0):.1f}% eng\n"
+        f"─────────────────────────\n"
+    )
+
+    blocos = [cabecalho]
+
+    legenda = copy.get("legenda", "").strip()
+    if legenda:
+        blocos.append(f"📝 *Legenda:*\n{legenda}")
+
+    transcricao = (copy.get("transcricao") or "").strip()
+    if transcricao:
+        blocos.append(f"🎙️ *Transcrição:*\n{transcricao}")
+
+    texto_visual = (copy.get("texto_visual") or "").strip()
+    if texto_visual:
+        blocos.append(f"👁️ *Texto visual:*\n{texto_visual}")
+
+    slides = copy.get("slides") or []
+    if slides:
+        slides_txt = "\n".join(
+            f"*Slide {i+1}:* {s}" if isinstance(s, str) else
+            f"*Slide {i+1}:* {s.get('titulo','')}\n{s.get('corpo','')}"
+            for i, s in enumerate(slides)
+        )
+        blocos.append(f"📑 *Slides:*\n{slides_txt}")
+
+    if not any([legenda, transcricao, texto_visual, slides]):
+        blocos.append("_(nenhum texto detectado)_")
+
+    # Junta tudo e particiona em fatias de 4000 chars (limite Telegram)
+    full = "\n\n".join(blocos)
+    partes = [full[i:i+4000] for i in range(0, len(full), 4000)]
+    return partes
+
+
 async def analisar_post_escolhido(bot: Bot, post_index: int):
-    """Extrai copy do post escolhido via OCR/transcrição."""
-    await msg(bot, f"🔬 Analisando post #{post_index + 1}...\nExtração de copy via OCR/transcrição.")
+    """Extrai copy completa do post escolhido e aguarda confirmação do usuário."""
+    _estado["post_index_atual"] = post_index
+    _estado["copy_retry_usado"] = False
+
+    tipo_label = {
+        "reel": "Reel — transcrição de áudio",
+        "carrossel": "Carrossel — OCR slides",
+        "post_estatico": "Post único — OCR imagem",
+    }
+    await msg(bot, f"🔬 Analisando post #{post_index + 1}...\n_{tipo_label.get('?', 'extração de copy')}_")
+
     try:
         payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
     except Exception as e:
@@ -228,27 +288,60 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
 
     _estado["viral_payload"] = payload
     post = payload.get("post_viral", {})
-    copy = post.get("copy", {})
-    metricas = post.get("metricas", {})
 
-    resumo = (
-        f"✅ *Post viral analisado!*\n\n"
-        f"📌 Autor: {post.get('autor', '?')}\n"
-        f"📊 {metricas.get('likes', 0)} likes · {metricas.get('views', 0)} views · "
-        f"{metricas.get('engajamento_pct', 0)}% eng\n\n"
-        f"📝 *Copy extraída:*\n"
-        f"_{copy.get('copy_consolidada', '(sem texto detectado)')[:300]}_\n\n"
-        f"─────────────────────────\n"
-        f"Como quer prosseguir?"
-    )
-    await msg(bot, resumo)
+    # Detecta o tipo agora para label correto
+    tipo = post.get("tipo", "?")
+    label = tipo_label.get(tipo, tipo)
+    await msg(bot, f"✅ *Copy extraída via {label}:*")
+
+    # Envia copy completa sem truncar nada
+    for parte in _formatar_copy_completa(post):
+        await msg(bot, parte)
+
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text="Avançar para pesquisa?",
+        text="A copy captada está completa?",
         reply_markup=kb(
             [
-                InlineKeyboardButton("✅ Aprovado — pesquisar", callback_data="viral_ok"),
-                InlineKeyboardButton("🔄 Escolher outro post", callback_data="scraper_retry"),
+                InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
+            ],
+            [
+                InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
+            ]
+        )
+    )
+
+
+async def analisar_post_escolhido_retry(bot: Bot, post_index: int):
+    """Releitura da copy do post (chamada apenas na 2ª tentativa)."""
+    try:
+        payload = await asyncio.to_thread(analisar_post_selecionado, post_index)
+    except Exception as e:
+        await msg(bot, f"❌ Erro ao reler post: {str(e)[:200]}")
+        return
+
+    if "erro" in payload:
+        await msg(bot, f"❌ {payload['erro']}")
+        return
+
+    _estado["viral_payload"] = payload
+    post = payload.get("post_viral", {})
+
+    await msg(bot, "🔄 *Releitura concluída — nova copy captada:*")
+    for parte in _formatar_copy_completa(post):
+        await msg(bot, parte)
+
+    await bot.send_message(
+        chat_id=TELEGRAM_CHAT_ID,
+        text="Agora a copy está completa?",
+        reply_markup=kb(
+            [
+                InlineKeyboardButton("✅ Sim, está ok", callback_data="copy_leitura_ok"),
+                InlineKeyboardButton("🔄 Reler copy", callback_data="copy_reler"),
+            ],
+            [
+                InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
             ]
         )
     )
@@ -259,7 +352,7 @@ async def analisar_post_escolhido(bot: Bot, post_index: int):
 async def executar_research(bot: Bot):
     """Roda o Research Agent e apresenta o briefing."""
     _estado["etapa_atual"] = "research"
-    await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 4–6 buscas estratégicas...\n_(pode levar ~1 min)_")
+    await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 5 buscas estratégicas sobre o tema...\n_(pode levar ~1 min)_")
     try:
         payload = await asyncio.to_thread(run_research, _estado["viral_payload"])
     except Exception as e:
@@ -274,13 +367,20 @@ async def executar_research(bot: Bot):
     briefing = payload.get("briefing_pesquisa", {})
     briefing_txt = briefing.get("briefing_formatado", "Briefing gerado.")
     buscas = briefing.get("buscas_realizadas", 0)
+    urls = briefing.get("urls_profundidade", [])
+
+    # Monta bloco de URLs de profundidade
+    urls_txt = ""
+    if urls:
+        urls_txt = "\n\n🔗 *Fontes usadas nas buscas:*\n" + "\n".join(f"• {u}" for u in urls if u)
 
     await msg(bot,
         f"📋 *Briefing de Pesquisa pronto!*\n\n"
         f"_{buscas} buscas realizadas_\n\n"
-        f"{briefing_txt[:2000]}\n\n"
+        f"{briefing_txt[:3000]}"
+        f"{urls_txt}\n\n"
         f"─────────────────────────\n"
-        f"Aprovado? Ou quer que eu aprofunde algum ponto?"
+        f"Aprovado?"
     )
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
@@ -509,9 +609,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         idx = int(data.split("_")[1])
         context.application.create_task(analisar_post_escolhido(bot, idx))
 
-    # ── Post viral aprovado ──
-    elif data == "viral_ok":
+    # ── Copy leitura confirmada — avança para research ──
+    elif data == "copy_leitura_ok":
         context.application.create_task(executar_research(bot))
+
+    # ── Reler copy (apenas 1 tentativa extra) ──
+    elif data == "copy_reler":
+        idx = _estado.get("post_index_atual")
+        if idx is None:
+            await msg(bot, "❌ Post não encontrado. Reinicie com /rodar.")
+            return
+        if _estado["copy_retry_usado"]:
+            await msg(bot,
+                "⚠️ Já tentei reler essa copy uma vez.\n\n"
+                "Se ainda estiver incompleta, pode ser limitação da API para esse conteúdo.\n"
+                "Quer avançar mesmo assim ou escolher outro post?"
+            )
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text="Como quer continuar?",
+                reply_markup=kb(
+                    [
+                        InlineKeyboardButton("✅ Avançar mesmo assim", callback_data="copy_leitura_ok"),
+                        InlineKeyboardButton("↩️ Escolher outro post", callback_data="scraper_retry"),
+                    ]
+                )
+            )
+            return
+        _estado["copy_retry_usado"] = True
+        await msg(bot, "🔄 Relendo a copy do post... _(tentativa extra)_")
+        context.application.create_task(analisar_post_escolhido_retry(bot, idx))
 
     # ── Research retry ──
     elif data == "research_retry":
