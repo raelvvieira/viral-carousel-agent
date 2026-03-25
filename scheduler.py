@@ -252,8 +252,16 @@ def _formatar_copy_completa(post: dict) -> list[str]:
         blocos.append(f"📝 *Legenda:*\n{legenda}")
 
     transcricao = (copy.get("transcricao") or "").strip()
+    status_tr = (copy.get("status") or {}).get("transcricao", "")
     if transcricao:
         blocos.append(f"🎙️ *Transcrição:*\n{transcricao}")
+    elif tipo == "reel":
+        motivo = {
+            "sem_fala_detectada": "sem fala detectada no áudio",
+            "erro_api": "API de transcrição falhou — tente reler",
+            "ausente": "URL do reel não encontrada",
+        }.get(status_tr, status_tr or "não disponível")
+        blocos.append(f"🎙️ *Transcrição:* _(vazia — {motivo})_")
 
     texto_visual = (copy.get("texto_visual") or "").strip()
     if texto_visual:

@@ -124,11 +124,12 @@ def ocr_imagem(image_url: str) -> str:
 
 def extrair_copy_reel(item: dict) -> dict:
     """Transcreve reel via Apify instagram-reel-analyzer + usa legenda como fallback."""
-    # Constrói URL completa do reel para o actor de transcrição
-    url_direta = item.get("url") or ""
+    # shortCode é o mais confiável — o campo "url" pode ser URL de CDN, não do Instagram
     short_code = item.get("shortCode") or item.get("code") or ""
-    if not url_direta and short_code:
+    if short_code:
         url_direta = f"https://www.instagram.com/reel/{short_code}/"
+    else:
+        url_direta = item.get("url") or ""
 
     transcricao = ""
     status_transcricao = "ausente"
@@ -137,7 +138,7 @@ def extrair_copy_reel(item: dict) -> dict:
             results = run_apify_actor(
                 "electrifying_haircut/instagram-reel-analyzer",
                 {"reelUrls": [url_direta]},
-                timeout=60
+                timeout=90
             )
             if results:
                 transcricao = (
