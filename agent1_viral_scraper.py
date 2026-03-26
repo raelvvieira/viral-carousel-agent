@@ -154,13 +154,19 @@ def extrair_copy_reel(item: dict) -> dict:
             print(f"[COPY] Actor retornou {len(results) if results else 0} resultado(s)")
             if results:
                 print(f"[COPY] Campos retornados: {list(results[0].keys())}")
+                transcript_error = results[0].get("transcriptError") or results[0].get("error") or ""
+                if transcript_error:
+                    print(f"[COPY] transcriptError: {transcript_error}")
                 transcricao = (
                     results[0].get("transcript") or
                     results[0].get("transcription") or
                     results[0].get("text") or ""
                 )
                 print(f"[COPY] transcript={repr(transcricao[:80]) if transcricao else 'VAZIO'}")
-                status_transcricao = "ok" if transcricao else "sem_fala_detectada"
+                if transcript_error and not transcricao:
+                    status_transcricao = "erro_api"
+                else:
+                    status_transcricao = "ok" if transcricao else "sem_fala_detectada"
         except Exception as e:
             print(f"[COPY] Transcrição falhou ({e}), usando só legenda.")
             status_transcricao = "erro_api"
