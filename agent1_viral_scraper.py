@@ -147,11 +147,14 @@ def extrair_copy_reel(item: dict) -> dict:
             )
             print(f"[COPY] Actor retornou {len(results) if results else 0} resultado(s)")
             if results:
-                print(f"[COPY] status: {results[0].get('status')}")
-                data = results[0].get("data") or {}
-                segmentos = data.get("transcript") or []
+                print(f"[COPY] Campos do resultado: {list(results[0].keys())}")
+                segmentos = (
+                    results[0].get("transcript") or
+                    (results[0].get("data") or {}).get("transcript") or
+                    []
+                )
                 transcricao = " ".join(s.get("text", "") for s in segmentos if s.get("text"))
-                print(f"[COPY] transcript={repr(transcricao[:80]) if transcricao else 'VAZIO'}")
+                print(f"[COPY] segmentos={len(segmentos)}, transcript={repr(transcricao[:80]) if transcricao else 'VAZIO'}")
                 status_transcricao = "ok" if transcricao else "sem_fala_detectada"
         except Exception as e:
             print(f"[COPY] Transcrição falhou ({e}), usando só legenda.")
