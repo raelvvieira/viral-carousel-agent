@@ -144,17 +144,22 @@ def extrair_copy_reel(item: dict) -> dict:
                 "includeTranscription": True,
                 "openaiApiKey": OPENAI_API_KEY or "",
             }
+            print(f"[COPY] URL enviada ao actor: {url_direta}")
+            print(f"[COPY] openaiApiKey presente: {bool(OPENAI_API_KEY)}")
             results = run_apify_actor(
                 "electrifying_haircut/instagram-reel-analyzer",
                 actor_input,
                 timeout=180
             )
+            print(f"[COPY] Actor retornou {len(results) if results else 0} resultado(s)")
             if results:
+                print(f"[COPY] Campos retornados: {list(results[0].keys())}")
                 transcricao = (
                     results[0].get("transcript") or
                     results[0].get("transcription") or
                     results[0].get("text") or ""
                 )
+                print(f"[COPY] transcript={repr(transcricao[:80]) if transcricao else 'VAZIO'}")
                 status_transcricao = "ok" if transcricao else "sem_fala_detectada"
         except Exception as e:
             print(f"[COPY] Transcrição falhou ({e}), usando só legenda.")
