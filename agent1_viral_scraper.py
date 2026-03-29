@@ -127,11 +127,8 @@ def extrair_copy_reel(item: dict) -> dict:
     """Transcreve reel via Apify instagram-reel-analyzer + usa legenda como fallback."""
     # shortCode é o mais confiável — o campo "url" pode ser URL de CDN, não do Instagram
     short_code = item.get("shortCode") or item.get("code") or ""
-    username = item.get("ownerUsername") or item.get("username") or ""
-    if short_code and username:
-        url_direta = f"https://www.instagram.com/{username}/reel/{short_code}/"
-    elif short_code:
-        url_direta = f"https://www.instagram.com/reel/{short_code}/"
+    if short_code:
+        url_direta = f"https://www.instagram.com/p/{short_code}/"
     else:
         url_direta = item.get("url") or ""
 
@@ -143,7 +140,7 @@ def extrair_copy_reel(item: dict) -> dict:
             results = run_apify_actor(
                 "invideoiq/video-transcriber",
                 {"video_urls": [url_direta]},
-                timeout=120
+                timeout=300
             )
             print(f"[COPY] Actor retornou {len(results) if results else 0} resultado(s)")
             if results:
