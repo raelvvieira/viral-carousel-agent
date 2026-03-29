@@ -525,7 +525,10 @@ async def executar_copy(bot: Bot):
                 [
                     InlineKeyboardButton("✅ Perfeito!", callback_data="copy_ok_reel"),
                     InlineKeyboardButton("✏️ Ajustar um bloco", callback_data="copy_ajustar"),
+                ],
+                [
                     InlineKeyboardButton("🔄 Refazer", callback_data="copy_redo"),
+                    InlineKeyboardButton("📐 Outro formato", callback_data="copy_outro_formato"),
                 ]
             )
         )
@@ -541,6 +544,7 @@ async def executar_copy(bot: Bot):
             ],
             [
                 InlineKeyboardButton("🔄 Refazer com outro ângulo", callback_data="copy_redo"),
+                InlineKeyboardButton("📐 Outro formato", callback_data="copy_outro_formato"),
             ]
         )
     )
@@ -742,6 +746,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Copy: refazer ──
     elif data == "copy_redo":
         context.application.create_task(executar_copy(bot))
+
+    # ── Copy: tentar outro formato (reutiliza briefing_payload, sem reiniciar pipeline) ──
+    elif data == "copy_outro_formato":
+        await perguntar_formato(bot)
 
     # ── Imagens aprovadas ──
     elif data == "images_ok":
