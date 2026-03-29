@@ -552,15 +552,68 @@ async def executar_copy(bot: Bot):
 
 # ── ETAPA 5: IMAGE AGENT ─────────────────────────────────────────────────────
 
+def _montar_teclado_imagens(imagens: list) -> InlineKeyboardMarkup:
+    """Monta teclado inline com botão por imagem + confirmar."""
+    linhas = []
+    linha_atual = []
+    for img in imagens:
+        num = img["slide_num"]
+        status = "✅" if img.get("ok") else "❌"
+        btn = InlineKeyboardButton(
+            f"{status} Alterar Img {num}",
+            callback_data=f"img_trocar_{num}"
+        )
+        linha_atual.append(btn)
+        if len(linha_atual) == 2:
+            linhas.append(linha_atual)
+            linha_atual = []
+    if linha_atual:
+        linhas.append(linha_atual)
+    linhas.append([InlineKeyboardButton("✅ Confirmar imagens", callback_data="images_ok")])
+    return InlineKeyboardMarkup(linhas)
+
+
+async def _enviar_album_imagens(bot: Bot, imagens: list):
+    """Envia as imagens como álbum (ou fotos individuais) no Telegram."""
+    from telegram import InputMediaPhoto
+
+    media_batch = []
+    for img in imagens:
+        if not img.get("url"):
+            continue
+        caption = f"Slide {img['slide_num']} · {img.get('tipo_slide', '')} · {img.get('fonte', '')}"
+        media_batch.append(InputMediaPhoto(media=img["url"], caption=caption))
+
+    if not media_batch:
+        await msg(bot, "⚠️ Nenhuma imagem disponível para exibir.")
+        return
+
+    for i in range(0, len(media_batch), 10):
+        lote = media_batch[i:i + 10]
+        try:
+            await bot.send_media_group(chat_id=TELEGRAM_CHAT_ID, media=lote)
+        except Exception:
+            # Fallback: envia individualmente se o álbum falhar
+            for m in lote:
+                try:
+                    await bot.send_photo(
+                        chat_id=TELEGRAM_CHAT_ID,
+                        photo=m.media,
+                        caption=m.caption
+                    )
+                except Exception as e:
+                    await msg(bot, f"⚠️ {m.caption} — não foi possível exibir: {str(e)[:80]}")
+
+
 async def executar_images(bot: Bot):
-    """Roda o Image Agent e apresenta URLs para aprovação."""
+    """Roda o Image Agent, envia as imagens visualmente e apresenta botões por imagem."""
     _estado["etapa_atual"] = "imagens"
     copy_data = (_estado.get("copy_payload") or {}).get("copy_aprovada", {})
     total_slides = len(copy_data.get("slides", []))
     await msg(bot,
-        f"🖼️ *Image Agent v2 iniciado!*\n\n"
+        f"🖼️ *Image Agent iniciado!*\n\n"
         f"Buscando imagens para {total_slides} slides...\n"
-        f"Fontes: Freepik IA → Google Images → Pexels/Unsplash\n\n"
+        f"Fontes: Freepik IA · Freepik Stock · Google Images\n\n"
         f"_(pode levar 2–4 min)_"
     )
     try:
@@ -576,20 +629,25 @@ async def executar_images(bot: Bot):
         return
 
     _estado["image_payload"] = payload
-    aprovacao_txt = payload.get("aprovacao_txt", "")
+    imagens = payload.get("imagens_aprovadas", [])
     ok = payload.get("imagens_ok", 0)
     total = payload.get("total_imagens", 0)
 
-    await msg(bot, aprovacao_txt[:3500])
+    # Envia as imagens como álbum visual
+    await _enviar_album_imagens(bot, imagens)
+
+    # Avisa slides sem imagem
+    sem_imagem = [img for img in imagens if not img.get("ok")]
+    if sem_imagem:
+        ids = ", ".join(str(img["slide_num"]) for img in sem_imagem)
+        await msg(bot, f"⚠️ Slides sem imagem: {ids}. Use os botões abaixo para tentar novamente.")
+
+    # Botões por imagem + confirmar
     await bot.send_message(
         chat_id=TELEGRAM_CHAT_ID,
-        text=f"✅ {ok}/{total} imagens encontradas. Aprovado?",
-        reply_markup=kb(
-            [
-                InlineKeyboardButton("✅ Aprovado — montar slides", callback_data="images_ok"),
-                InlineKeyboardButton("🔄 Trocar uma imagem", callback_data="images_trocar"),
-            ]
-        )
+        text=f"🖼️ *{ok}/{total} imagens encontradas.*\nClique para alterar ou confirme:",
+        parse_mode="Markdown",
+        reply_markup=_montar_teclado_imagens(imagens)
     )
 
 
@@ -755,10 +813,42 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "images_ok":
         await perguntar_template(bot)
 
-    # ── Trocar imagem ──
-    elif data == "images_trocar":
-        await msg(bot, "🔄 Qual slide quer trocar? _(ex: \"slide 3\")_\nOu descreva a imagem ideal.")
-        _estado["aguardando_input"] = "image_troca"
+    # ── Alterar imagem específica por botão ──
+    elif data.startswith("img_trocar_"):
+        slide_num = int(data.split("_")[-1])
+        imagens = (_estado.get("image_payload") or {}).get("imagens_aprovadas", [])
+        if not imagens:
+            await msg(bot, "❌ Estado perdido. Use /cancelar para reiniciar.")
+            return
+
+        await msg(bot, f"🔄 Buscando nova imagem para slide {slide_num}... _(1 tentativa)_")
+
+        imagens_novas = await asyncio.to_thread(trocar_imagem, imagens, slide_num)
+        _estado["image_payload"]["imagens_aprovadas"] = imagens_novas
+
+        img = next((i for i in imagens_novas if i["slide_num"] == slide_num), {})
+        if img.get("ok"):
+            try:
+                await bot.send_photo(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    photo=img["url"],
+                    caption=f"✅ Slide {slide_num} · {img.get('fonte', '')}"
+                )
+            except Exception:
+                await msg(bot,
+                    f"✅ Slide {slide_num} · {img.get('fonte', '')}\n{img.get('url', '')}"
+                )
+        else:
+            await msg(bot, f"❌ Slide {slide_num} — não encontrei imagem. Tente clicar novamente.")
+
+        ok_count = sum(1 for i in imagens_novas if i.get("ok"))
+        total_count = len(imagens_novas)
+        await bot.send_message(
+            chat_id=TELEGRAM_CHAT_ID,
+            text=f"🖼️ *{ok_count}/{total_count} imagens.* Altere ou confirme:",
+            parse_mode="Markdown",
+            reply_markup=_montar_teclado_imagens(imagens_novas)
+        )
 
     # ── Template escolhido ──
     elif data.startswith("template_"):
@@ -834,32 +924,6 @@ async def handle_texto(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg(bot, f"✅ Slide {slide_num} atualizado!\n\n{payload_atualizado.get('slides', [])[slide_num-1] if payload_atualizado.get('slides') else ''}")
         else:
             await msg(bot, "❌ Não encontrei o número do slide. Tente: \"slide 3 — mais agressivo\"")
-        return
-
-    # ── Troca de imagem ──
-    elif esperando == "image_troca":
-        _estado["aguardando_input"] = None
-        partes = texto.lower().split()
-        slide_num = None
-        for p in partes:
-            if p.isdigit():
-                slide_num = int(p)
-                break
-
-        if slide_num and _estado.get("image_payload"):
-            await msg(bot, f"🔄 Trocando imagem do slide {slide_num}...")
-            imagens = _estado["image_payload"].get("imagens_aprovadas", [])
-            imagens_novas = await asyncio.to_thread(trocar_imagem, imagens, slide_num, texto)
-            _estado["image_payload"]["imagens_aprovadas"] = imagens_novas
-
-            img = next((i for i in imagens_novas if i["slide_num"] == slide_num), {})
-            await msg(bot,
-                f"✅ Slide {slide_num} atualizado!\n"
-                f"Fonte: {img.get('fonte', '?')}\n"
-                f"{img.get('url', '—')}"
-            )
-        else:
-            await msg(bot, "❌ Não encontrei o número do slide. Tente: \"slide 3\"")
         return
 
     # ── Gestão da base de perfis ──
