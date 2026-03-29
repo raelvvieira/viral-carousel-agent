@@ -409,10 +409,10 @@ async def analisar_post_escolhido_retry(bot: Bot, post_index: int):
 # ── ETAPA 2: RESEARCH AGENT ──────────────────────────────────────────────────
 
 async def executar_research(bot: Bot):
-    """Roda o Research Agent e apresenta o briefing."""
+    """Roda o Research Agent e apresenta o resumo da pesquisa."""
     try:
         _estado["etapa_atual"] = "research"
-        await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 5 buscas estratégicas sobre o tema...\n_(pode levar ~1 min)_")
+        await msg(bot, "🔍 *Research Agent iniciado!*\n\nRealizando 5 buscas web sobre o tema...\n_(pode levar ~1 min)_")
         try:
             payload = await asyncio.to_thread(run_research, _estado["viral_payload"])
         except Exception as e:
@@ -426,30 +426,22 @@ async def executar_research(bot: Bot):
             return
 
         _estado["briefing_payload"] = payload
-        briefing = payload.get("briefing_pesquisa", {})
-        briefing_txt = briefing.get("briefing_formatado", "Briefing gerado.")
-        buscas = briefing.get("buscas_realizadas", 0)
-        urls = briefing.get("urls_profundidade", [])
-
-        # Monta bloco de URLs de profundidade
-        urls_txt = ""
-        if urls:
-            urls_txt = "\n\n🔗 *Fontes usadas nas buscas:*\n" + "\n".join(f"• {u}" for u in urls if u)
+        resumo = payload.get("resumo_pesquisa", "")
+        tema = payload.get("tema_central", "")
 
         await msg(bot,
-            f"📋 *Briefing de Pesquisa pronto!*\n\n"
-            f"_{buscas} buscas realizadas_\n\n"
-            f"{briefing_txt[:3000]}"
-            f"{urls_txt}\n\n"
+            f"🔍 *Pesquisa concluída!*\n\n"
+            f"*Tema:* {tema}\n\n"
+            f"{resumo}\n\n"
             f"─────────────────────────\n"
-            f"Aprovado?"
+            f"Copy completa + resumo da pesquisa salvos. Pronto para o próximo agente."
         )
         await bot.send_message(
             chat_id=TELEGRAM_CHAT_ID,
             text="Próxima etapa:",
             reply_markup=kb(
                 [
-                    InlineKeyboardButton("✅ Aprovado — escolher formato", callback_data="briefing_ok"),
+                    InlineKeyboardButton("✅ Próxima etapa", callback_data="briefing_ok"),
                     InlineKeyboardButton("🔄 Refazer pesquisa", callback_data="research_retry"),
                 ]
             )
