@@ -19,23 +19,26 @@ client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 PRINCIPIOS = """
 PRINCÍPIOS INVIOLÁVEIS DA COPY WAVY:
 
-1. ORIGINALIDADE TOTAL — Inspire-se no viral, nunca copie. A copy deve ser 100% nova.
+1. ORIGINALIDADE TOTAL: Inspire-se no viral, nunca copie. A copy deve ser 100% nova.
 
-2. HOOK MAGNÉTICO — O slide 1 (ou primeiro parágrafo) precisa parar o scroll em 0,3s.
+2. HOOK MAGNÉTICO: O slide 1 (ou primeiro parágrafo) precisa parar o scroll em 0,3s.
    Use dado chocante, pergunta que dói ou afirmação que divide opiniões.
 
-3. DADOS REAIS — Cada claim precisa ter número, estudo ou fonte. Evite generalizações.
+3. DADOS REAIS: Cada claim precisa ter número, estudo ou fonte. Evite generalizações.
 
-4. LINGUAGEM DO PÚBLICO — Escreva como o público fala, não como especialista escreve.
+4. LINGUAGEM DO PÚBLICO: Escreva como o público fala, não como especialista escreve.
    Zero jargão técnico desnecessário. Zero formalidade.
 
-5. TENSÃO CRESCENTE — Cada slide/parágrafo precisa criar curiosidade para o próximo.
+5. TENSÃO CRESCENTE: Cada slide/parágrafo precisa criar curiosidade para o próximo.
    Use "mas espera..." / "só que tem um detalhe..." / "e aqui vem a virada:"
 
-6. CTA ESPECÍFICO — Nunca "curta e siga". CTA concreto: "salva esse post",
+6. CTA ESPECÍFICO: Nunca "curta e siga". CTA concreto: "salva esse post",
    "manda pra quem precisa ouvir isso", "comenta qual é o seu caso".
 
-7. TOM CONSISTENTE — Seja direto, humano e levemente irreverente. Zero corporativo.
+7. TOM CONSISTENTE: Seja direto, humano e levemente irreverente. Zero corporativo.
+
+8. SEM TRAVESSÃO: NUNCA use o caractere "—" na copy. Fica com cara de IA.
+   Substitua por dois pontos, ponto, vírgula ou reescreva a frase.
 """
 
 # ── PROMPTS POR FORMATO ──────────────────────────────────────────────────────
@@ -44,23 +47,25 @@ PROMPT_CARROSSEL = """Você é o Copy Agent v3 da Wavy, especialista em criar ca
 
 {principios}
 
-BRIEFING DE PESQUISA:
+RESUMO DA PESQUISA:
 {briefing}
 
 POST VIRAL DE REFERÊNCIA (inspire-se, não copie):
 {copy_referencia}
 
 FORMATO: Carrossel de {num_slides} slides
-TEMA: {tema}
+TÓPICO: {tema}
 
 Crie o carrossel completo. Cada slide tem:
-- titulo: texto principal (máximo 8 palavras, impactante)
-- corpo: desenvolvimento (máximo 40 palavras, claro e direto)
+- titulo: texto principal (máximo 10 palavras, impactante, SEM travessão)
+- corpo: desenvolvimento (máximo 40 palavras, claro e direto, SEM travessão)
 - prompt_imagem: descrição visual para gerar/buscar a imagem ideal desse slide
 - tipo_slide: cover | conteudo | dado | virada | cta
 
 ESTRUTURA OBRIGATÓRIA:
-- Slide 1 (cover): Hook. Para o scroll. Faz a pessoa precisar ver o próximo.
+- Slide 1 (cover): O titulo deve ser o HOOK PRINCIPAL do carrossel. A frase mais
+  impactante, que para o scroll e resume o valor do conteúdo. Máximo 12 palavras.
+  O campo "tema" no JSON deve ser apenas 3-5 palavras curtas descrevendo o tópico.
 - Slides 2-{penultimo}: Desenvolvimento com dados, dores e insights. Tensão crescente.
 - Slide {ultimo} (cta): CTA específico + identidade de marca.
 
@@ -92,22 +97,22 @@ PROMPT_POST_UNICO = """Você é o Copy Agent v3 da Wavy, especialista em posts �
 
 {principios}
 
-BRIEFING DE PESQUISA:
+RESUMO DA PESQUISA:
 {briefing}
 
 POST VIRAL DE REFERÊNCIA (inspire-se, não copie):
 {copy_referencia}
 
 FORMATO: Post único
-TEMA: {tema}
+TÓPICO: {tema}
 
 Crie um post único de alto impacto com:
-- titulo: linha de texto sobreposta à imagem (máximo 10 palavras)
-- corpo: texto secundário opcional (máximo 15 palavras)
+- titulo: linha de texto sobreposta à imagem (máximo 10 palavras, SEM travessão)
+- corpo: texto secundário opcional (máximo 15 palavras, SEM travessão)
 - prompt_imagem: descrição visual da imagem ideal
 - legenda: copy completa da legenda (hook + valor + CTA + hashtags)
 
-A imagem precisa funcionar sozinha — sem a legenda. Texto visual forte.
+A imagem precisa funcionar sozinha sem a legenda. Texto visual forte.
 
 Retorne APENAS JSON:
 {{
@@ -131,25 +136,26 @@ PROMPT_REEL = """Você é o Copy Agent v3 da Wavy, especialista em roteiros de R
 
 {principios}
 
-BRIEFING DE PESQUISA:
+RESUMO DA PESQUISA:
 {briefing}
 
 POST VIRAL DE REFERÊNCIA (inspire-se, não copie):
 {copy_referencia}
 
 FORMATO: Roteiro de Reel (vídeo)
-TEMA: {tema}
+TÓPICO: {tema}
 
 Crie um roteiro completo de Reel. Estrutura:
 - duração ideal: 30-60 segundos
 - cada bloco tem: tempo, fala (exata, como gravaria), nota_direção
+- SEM travessão em nenhuma fala
 
 ESTRUTURA OBRIGATÓRIA:
-[0-3s] Hook de abertura — frase que para o scroll no primeiro frame
-[3-15s] Problema/Agitação — aprofunda a dor do público
-[15-35s] Desenvolvimento — dados, insights, virada
-[35-50s] Solução/Conclusão — o que fazer com isso
-[50-60s] CTA — ação específica
+[0-3s] Hook de abertura: frase que para o scroll no primeiro frame
+[3-15s] Problema/Agitação: aprofunda a dor do público
+[15-35s] Desenvolvimento: dados, insights, virada
+[35-50s] Solução/Conclusão: o que fazer com isso
+[50-60s] CTA: ação específica
 
 LEGENDA (para o campo "legenda"):
 - Hook do reel
@@ -180,12 +186,19 @@ Retorne APENAS JSON:
 
 def gerar_copy(briefing_payload: dict, formato: str = "carrossel", num_slides: int = 7) -> dict:
     """Gera a copy completa via Claude."""
-    briefing = briefing_payload.get("briefing_pesquisa", {})
-    instrucoes = briefing_payload.get("instrucoes_pipeline", {})
+    # Lê do payload do Agent 2 (v2)
+    copy_completa = briefing_payload.get("copy_completa", {})
+    briefing_txt = briefing_payload.get("resumo_pesquisa", "")
+    tema = briefing_payload.get("tema_central", "")
+    copy_ref = copy_completa.get("copy_consolidada", "")[:600]
 
-    tema = briefing.get("tema_central") or instrucoes.get("aprofundar_sobre", "")
-    briefing_txt = briefing.get("briefing_formatado", "")
-    copy_ref = instrucoes.get("copy_referencia", "")[:400]
+    # Fallback para payload antigo (compatibilidade)
+    if not briefing_txt:
+        briefing = briefing_payload.get("briefing_pesquisa", {})
+        instrucoes = briefing_payload.get("instrucoes_pipeline", {})
+        briefing_txt = briefing.get("briefing_formatado", "")
+        tema = tema or briefing.get("tema_central") or instrucoes.get("aprofundar_sobre", "")
+        copy_ref = copy_ref or instrucoes.get("copy_referencia", "")[:600]
 
     if formato == "carrossel":
         prompt = PROMPT_CARROSSEL.format(
@@ -291,7 +304,9 @@ def formatar_copy_para_aprovacao(copy_data: dict) -> str:
     formato = copy_data.get("formato", "carrossel")
     tema = copy_data.get("tema", "")
 
-    linhas = [f"✍️ Copy pronta — {formato.upper()} · {tema}\n"]
+    linhas = [f"✍️ Copy pronta: {formato.upper()}"]
+    if tema:
+        linhas.append(f"_{tema}_")
     linhas.append("─" * 40)
 
     if formato == "reel":
@@ -322,22 +337,24 @@ def formatar_copy_para_aprovacao(copy_data: dict) -> str:
 
 def montar_payload_copy(copy_data: dict, briefing_payload: dict, formato: str, num_slides: int) -> dict:
     """Monta o payload completo para o próximo agente."""
-    briefing = briefing_payload.get("briefing_pesquisa", {})
+    tema = copy_data.get("tema", briefing_payload.get("tema_central", ""))
 
     return {
         "copy_aprovada": {
             "formato": formato,
             "num_slides": num_slides,
-            "tema": copy_data.get("tema", briefing.get("tema_central", "")),
+            "tema": tema,
             "slides": copy_data.get("slides", []),
             "roteiro": copy_data.get("roteiro", []),
             "legenda": copy_data.get("legenda", ""),
             "duracao_estimada": copy_data.get("duracao_estimada"),
             "copy_formatada": formatar_copy_para_aprovacao(copy_data)
         },
-        "briefing_pesquisa": briefing_payload.get("briefing_pesquisa", {}),
+        "copy_completa": briefing_payload.get("copy_completa", {}),
+        "resumo_pesquisa": briefing_payload.get("resumo_pesquisa", ""),
+        "tema_central": tema,
         "post_viral": briefing_payload.get("post_viral", {}),
-        "instrucoes_pipeline": briefing_payload.get("instrucoes_pipeline", {})
+        "instrucoes_pipeline": briefing_payload.get("instrucoes_pipeline", {}),
     }
 
 
