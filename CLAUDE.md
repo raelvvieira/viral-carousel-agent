@@ -1,17 +1,21 @@
 # viral-carousel-agent — Memória do Projeto
 
-## ⚠️ ETAPA ESTABILIZADA — NÃO MODIFICAR
+## ⚠️ AGENTE 1 — COMPLETAMENTE ESTABILIZADO — NÃO MODIFICAR
 
-As funções de busca de conteúdo viral em `agent1_viral_scraper.py` estão em produção e
-funcionando corretamente. **Não altere** as seguintes funções sem autorização explícita:
+`agent1_viral_scraper.py` está 100% funcional em produção para todos os formatos
+(post estático, reel, carrossel). **Não edite nenhuma função deste arquivo** sem
+autorização explícita do usuário.
 
+Funções protegidas:
 - `_scrape_perfil` — chama apify/instagram-post-scraper com os parâmetros corretos
 - `scrape_base_perfis` — paraleliza perfis e aciona progress_cb
 - `calcular_engajamento` / `calcular_engajamento_pct` — lógica de ranking
 - `formatar_ranking` — formatação do output para o Telegram
+- `extrair_copy_reel` — transcrição via invideoiq/video-transcriber (URL `/p/shortCode/`, timeout 300s)
+- `extrair_copy_carrossel` — OCR via Google Vision API
+- `extrair_copy_post_estatico` — OCR via Google Vision API
 
-Motivo: configuração validada em produção (março/2026). Qualquer mudança nessas funções
-requer teste end-to-end completo e aprovação explícita do usuário.
+Validado em produção: março/2026. **Próximos trabalhos são exclusivamente em agent2_research.py e além.**
 
 ## Scraping de Instagram (agent1_viral_scraper.py)
 
