@@ -22,24 +22,27 @@ TEMA: {tema}
 COPY DE REFERÊNCIA:
 {copy_ref}
 
-Seu objetivo é fazer de 4 a 6 buscas web ESTRATÉGICAS para coletar dados reais que vão
-enriquecer a criação de conteúdo novo sobre esse tema.
+Seu objetivo é fazer EXATAMENTE 5 buscas web ESTRATÉGICAS para coletar dados reais que vão
+enriquecer a criação de conteúdo novo sobre esse tema. Não faça mais nem menos que 5 buscas.
 
 REGRAS DAS BUSCAS:
-- Busque DADOS NUMÉRICOS (estatísticas, pesquisas, percentuais)
-- Busque DORES REAIS do público (reclamações, frustrações, problemas)
-- Busque TENDÊNCIAS recentes (últimos 3 meses)
-- Busque ARGUMENTOS CONTRÁRIOS (o que as pessoas questionam sobre esse tema)
-- Busque CASOS DE SUCESSO concretos (exemplos reais com números)
+- Busca 1: DADOS NUMÉRICOS (estatísticas, pesquisas, percentuais)
+- Busca 2: DORES REAIS do público (reclamações, frustrações, problemas)
+- Busca 3: TENDÊNCIAS recentes (últimos 3 meses)
+- Busca 4: ARGUMENTOS CONTRÁRIOS (o que as pessoas questionam sobre esse tema)
+- Busca 5: CASOS DE SUCESSO concretos (exemplos reais com números)
 - Varie os termos: use inglês e português, termos técnicos e populares
 
-Execute as buscas agora e retorne um JSON com a estrutura:
+Para cada busca, salve a URL da fonte principal encontrada.
+
+Execute as 5 buscas agora e retorne um JSON com a estrutura:
 {
   "buscas_realizadas": [
-    {"query": "...", "resultado_resumo": "...", "dados_uteis": ["...", "..."]}
+    {"query": "...", "resultado_resumo": "...", "url_fonte": "https://...", "dados_uteis": ["...", "..."]}
   ],
   "tema_central": "...",
   "subtemas_descobertos": ["..."],
+  "urls_profundidade": ["https://fonte1.com", "https://fonte2.com", "https://fonte3.com", "https://fonte4.com", "https://fonte5.com"],
   "dados_impactantes": ["Dado 1 com fonte", "Dado 2 com fonte"],
   "dores_publico": ["Dor 1", "Dor 2", "Dor 3"],
   "insights_exclusivos": ["Insight 1", "Insight 2"],
@@ -213,12 +216,14 @@ def montar_payload_briefing(dados_pesquisa: dict, briefing_txt: str, viral_paylo
             "hooks_sugeridos": dados_pesquisa.get("hooks_sugeridos", []),
             "angulos_possiveis": dados_pesquisa.get("angulos_possiveis", []),
             "buscas_realizadas": len(dados_pesquisa.get("buscas_realizadas", [])),
-            "subtemas": dados_pesquisa.get("subtemas_descobertos", [])
+            "subtemas": dados_pesquisa.get("subtemas_descobertos", []),
+            "urls_profundidade": dados_pesquisa.get("urls_profundidade", []),
         },
         "post_viral": post,
         "instrucoes_pipeline": {
             **instrucoes,
-            "copy_referencia": post.get("copy", {}).get("copy_consolidada", "")
+            "copy_referencia": post.get("copy", {}).get("copy_consolidada", ""),
+            "copy_completa": post.get("copy", {}),
         }
     }
 

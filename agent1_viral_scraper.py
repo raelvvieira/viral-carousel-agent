@@ -9,13 +9,28 @@ import os
 import json
 import base64
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 APIFY_API_KEY     = os.getenv("APIFY_API_KEY")
 GOOGLE_VISION_KEY = os.getenv("GOOGLE_VISION_API_KEY")
+OPENAI_API_KEY    = os.getenv("OPENAI_API_KEY")
 
-# Base de perfis gerenciada em memória (persistida via arquivo entre runs)
-BASE_PERFIS_PATH = "/tmp/wavy_base_perfis.json"
+# Base de perfis persistida no diretório do projeto
+BASE_PERFIS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wavy_base_perfis.json")
+
+PERFIS_DEFAULT = [
+    "@brmetaverso",
+    "@noevarner.ai",
+    "@kylewhitrow",
+    "@paidotrafego",
+    "@pedrosobral",
+    "@caduneiva",
+    "@g4.business",
+    "@v4company",
+    "@nateherkai",
+    "@oreidotrafego",
+]
 
 
 # ── UTILS ───────────────────────────────────────────────────────────────────
@@ -25,7 +40,8 @@ def carregar_base_perfis() -> list[str]:
         with open(BASE_PERFIS_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return []
+        salvar_base_perfis(PERFIS_DEFAULT)
+        return PERFIS_DEFAULT
 
 
 def salvar_base_perfis(perfis: list[str]):
@@ -108,32 +124,56 @@ def ocr_imagem(image_url: str) -> str:
 
 
 def extrair_copy_reel(item: dict) -> dict:
-    """Transcreve reel via Apify instagram-reel-analyzer."""
-    url = item.get("url") or item.get("shortCode") or ""
+    """Transcreve reel via Apify instagram-reel-analyzer + usa legenda como fallback."""
+    # shortCode é o mais confiável — o campo "url" pode ser URL de CDN, não do Instagram
+    short_code = item.get("shortCode") or item.get("code") or ""
+    if short_code:
+        url_direta = f"https://www.instagram.com/p/{short_code}/"
+    else:
+        url_direta = item.get("url") or ""
+
     transcricao = ""
     status_transcricao = "ausente"
-    if url:
-        results = run_apify_actor(
-            "electrifying_haircut/instagram-reel-analyzer",
-            {"reelUrls": [url]}
-        )
-        if results:
-            transcricao = results[0].get("transcript") or results[0].get("transcription") or ""
-            status_transcricao = "ok" if transcricao else "ausente"
+    if url_direta:
+        try:
+            print(f"[COPY] URL enviada ao actor: {url_direta}")
+            results = run_apify_actor(
+                "invideoiq/video-transcriber",
+                {"video_urls": [url_direta]},
+                timeout=300
+            )
+            print(f"[COPY] Actor retornou {len(results) if results else 0} resultado(s)")
+            if results:
+                print(f"[COPY] Campos do resultado: {list(results[0].keys())}")
+                segmentos = (
+                    results[0].get("transcript") or
+                    (results[0].get("data") or {}).get("transcript") or
+                    []
+                )
+                transcricao = " ".join(s.get("text", "") for s in segmentos if s.get("text"))
+                print(f"[COPY] segmentos={len(segmentos)}, transcript={repr(transcricao[:80]) if transcricao else 'VAZIO'}")
+                status_transcricao = "ok" if transcricao else "sem_fala_detectada"
+        except Exception as e:
+            print(f"[COPY] Transcrição falhou ({e}), usando só legenda.")
+            status_transcricao = "erro_api"
 
-    legenda = item.get("caption") or item.get("text") or ""
+    legenda = item.get("caption") or item.get("text") or item.get("description") or ""
     copy_consolidada = "\n\n".join(filter(None, [transcricao, legenda]))
+
     return {
         "transcricao": transcricao,
         "legenda": legenda,
         "hashtags": item.get("hashtags", []),
-        "copy_consolidada": copy_consolidada,
+        "copy_consolidada": copy_consolidada or "(sem texto detectado)",
         "status": {
             "legenda": "ok" if legenda else "ausente",
             "transcricao": status_transcricao,
             "ocr": None
         },
-        "video_url_para_transcricao_manual": item.get("videoUrl") or item.get("video_url") if not transcricao else None
+        "video_url_para_transcricao_manual": (
+            item.get("videoUrl") or item.get("video_url") or url_direta
+            if not transcricao else None
+        )
     }
 
 
@@ -220,7 +260,7 @@ def extrair_copy(item: dict) -> dict:
 def calcular_engajamento(item: dict) -> int:
     return (
         (item.get("likesCount") or 0) +
-        (item.get("videoPlayCount") or 0) +
+        (item.get("videoPlayCount") or item.get("videoViewCount") or 0) +
         (item.get("savesCount") or 0) +
         (item.get("sharesCount") or 0)
     )
@@ -293,29 +333,58 @@ def montar_payload(item: dict, tipo: str, copy_data: dict, analise: dict) -> dic
 
 # ── FONTES DE SCRAPING ───────────────────────────────────────────────────────
 
-def scrape_base_perfis(num_posts: int = 5) -> list[dict]:
-    """Minera os perfis da base — últimos 5 dias, todos os tipos."""
+def _scrape_perfil(handle: str, num_posts: int) -> list[dict]:
+    """Busca posts de um único perfil (usada em paralelo)."""
+    username = handle.lstrip("@")
+    results = run_apify_actor(
+        "apify/instagram-post-scraper",
+        {
+            "username": [username],
+            "resultsLimit": num_posts,
+            "onlyPostsNewerThan": "5 days",
+            "skipPinnedPosts": True,
+        },
+        timeout=60
+    )
+    if not results:
+        print(f"[SCRAPER] {handle}: sem retorno do Apify")
+        return []
+    for item in results:
+        item["_perfil_origem"] = handle
+    print(f"[SCRAPER] {handle}: {len(results)} posts retornados")
+    return results
+
+
+def scrape_base_perfis(num_posts: int = 10, max_workers: int = 10, progress_cb=None) -> list[dict]:
+    """Busca perfis em paralelo — últimos 30 dias, top 10 por engajamento."""
     perfis = carregar_base_perfis()
     if not perfis:
         return []
 
     todos_posts = []
-    for handle in perfis:
-        username = handle.lstrip("@")
-        results = run_apify_actor(
-            "apify/instagram-post-scraper",
-            {
-                "usernames": [username],
-                "resultsLimit": num_posts,
-                "onlyPostsNewerThan": "5 days"
-            }
-        )
-        for item in results:
-            item["_perfil_origem"] = handle
-        todos_posts.extend(results)
+
+    print(f"[SCRAPER] Buscando {len(perfis)} perfis em paralelo ({max_workers} workers)...")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_scrape_perfil, handle, num_posts): handle
+            for handle in perfis
+        }
+        for future in as_completed(futures):
+            handle = futures[future]
+            try:
+                selecionados = future.result()
+                todos_posts.extend(selecionados)
+                if progress_cb:
+                    melhor = max(selecionados, key=calcular_engajamento) if selecionados else None
+                    views = (melhor.get("videoPlayCount") or melhor.get("videoViewCount") or 0) if melhor else 0
+                    progress_cb(handle, len(selecionados), views)
+            except Exception as e:
+                print(f"[SCRAPER] Falha em {handle}: {e}")
+                if progress_cb:
+                    progress_cb(handle, 0, 0)
 
     todos_posts.sort(key=calcular_engajamento, reverse=True)
-    return todos_posts[:20]
+    return todos_posts[:10]
 
 
 def scrape_por_tema(tema: str, plataforma: str = "instagram", max_items: int = 5) -> list[dict]:
@@ -402,7 +471,7 @@ def formatar_ranking(posts: list[dict], titulo: str = "Top Virais") -> str:
         return "Nenhum post encontrado."
 
     linhas = [f"🔥 {titulo}\n"]
-    for i, post in enumerate(posts[:5], 1):
+    for i, post in enumerate(posts[:10], 1):
         tipo_raw = post.get("type") or post.get("productType") or "post_estatico"
         tipo = "reel" if "video" in tipo_raw.lower() or "reel" in tipo_raw.lower() else \
                "carrossel" if "sidecar" in tipo_raw.lower() else "post_estatico"
@@ -410,7 +479,7 @@ def formatar_ranking(posts: list[dict], titulo: str = "Top Virais") -> str:
 
         autor = post.get("ownerUsername") or post.get("username") or "?"
         origem = post.get("_perfil_origem", f"@{autor}")
-        views = post.get("videoPlayCount") or 0
+        views = post.get("videoPlayCount") or post.get("videoViewCount") or 0
         likes = post.get("likesCount") or 0
         eng_pct = calcular_engajamento_pct(post)
         legenda = post.get("caption") or post.get("text") or ""
@@ -441,7 +510,7 @@ def run_viral_scraper(fonte: int, **kwargs) -> dict:
     Retorna dict com posts brutos e ranking formatado.
     """
     if fonte == 1:
-        posts = scrape_base_perfis()
+        posts = scrape_base_perfis(progress_cb=kwargs.get("progress_cb"))
         ranking_txt = formatar_ranking(posts, "Virais da Sua Base · Instagram")
     elif fonte == 2:
         tema = kwargs.get("tema", "")
