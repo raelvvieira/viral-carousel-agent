@@ -168,55 +168,57 @@ def buscar_freepik_stock(query: str) -> str | None:
 
 # ── GOOGLE IMAGES VIA APIFY ──────────────────────────────────────────────────
 
-def _gerar_queries_google(titulo: str, prompt_raw: str, marca_nome: str | None) -> list:
-    """Gera até 5 variações de query para busca no Google Images."""
-    queries = []
+def _gerar_query_google(titulo: str, prompt_raw: str, marca_nome: str | None) -> str:
+    """Gera a melhor query para busca no Google Images (1 string)."""
     if marca_nome:
         person = BRAND_ICONS.get(marca_nome, marca_nome)
-        queries.append(f"{person} photo")
-        queries.append(f"{marca_nome} brand official photo")
-    queries.append(f"{titulo} {prompt_raw}"[:80])
-    queries.append(f"{titulo} photography -pinterest")
-    queries.append(titulo[:60])
-    # Remove duplicatas mantendo ordem
-    seen, dedup = set(), []
-    for q in queries:
-        q = q.strip()
-        if q and q not in seen:
-            seen.add(q)
-            dedup.append(q)
-    return dedup[:5]
+        return f"{person} photo"
+    return f"{titulo} {prompt_raw}"[:80]
 
 
-def buscar_google_images(queries: list, max_tentativas: int = 5) -> str | None:
+def buscar_google_images(query: str, tipo_slide: str = "conteudo") -> str | None:
     """
-    Busca imagem no Google Images via Apify.
-    Tenta cada query (até max_tentativas), para na primeira com resultado.
+    Busca imagem no Google Images via hooli/google-images-scraper (Apify).
+    Solicita 2 imagens e seleciona a melhor por orientação:
+    - capa (cover): prefere retrato (portrait, height >= width)
+    - demais slides: prefere paisagem (landscape, width > height)
     """
-    actor_url = "https://api.apify.com/v2/acts/apify~google-search-scraper/run-sync-get-dataset-items"
-    for query in queries[:max_tentativas]:
-        try:
-            resp = requests.post(
-                actor_url,
-                params={"token": APIFY_API_KEY},
-                json={
-                    "queries": query,
-                    "maxPagesPerQuery": 1,
-                    "resultsPerPage": 10,
-                    "languageCode": "pt",
-                    "countryCode": "br"
-                },
-                timeout=60
-            )
-            resp.raise_for_status()
-            results = resp.json()
-            for item in results:
-                url = item.get("imageUrl") or item.get("thumbnailUrl")
-                if url:
-                    print(f"[IMAGE] Google ok: {query[:50]}")
-                    return url
-        except Exception as e:
-            print(f"[IMAGE] Google erro ({query[:40]}): {e}")
+    actor_url = "https://api.apify.com/v2/acts/hooli~google-images-scraper/run-sync-get-dataset-items"
+    prefer_landscape = tipo_slide != "cover"
+    try:
+        resp = requests.post(
+            actor_url,
+            params={"token": APIFY_API_KEY},
+            json={"queries": [query], "maxResultsPerQuery": 2},
+            timeout=90
+        )
+        resp.raise_for_status()
+        results = resp.json()
+
+        landscape_url = portrait_url = any_url = None
+        for item in results:
+            url = item.get("imageUrl") or item.get("thumbnailUrl")
+            if not url:
+                continue
+            any_url = any_url or url
+            w = item.get("width", 0) or 0
+            h = item.get("height", 0) or 0
+            if w and h:
+                if w > h and not landscape_url:
+                    landscape_url = url
+                elif h >= w and not portrait_url:
+                    portrait_url = url
+
+        chosen = (
+            (landscape_url or portrait_url or any_url) if prefer_landscape
+            else (portrait_url or landscape_url or any_url)
+        )
+        if chosen:
+            print(f"[IMAGE] Google ok: {query[:50]}")
+        return chosen
+
+    except Exception as e:
+        print(f"[IMAGE] Google erro ({query[:50]}): {e}")
     return None
 
 
@@ -237,10 +239,12 @@ def buscar_imagem_para_slide(slide: dict) -> dict:
 
     url, fonte = None, None
 
+    tipo_slide = slide.get("tipo_slide", "conteudo")
+
     if is_brand:
         # Marca / pessoa → foto real do Google
-        queries = _gerar_queries_google(titulo, prompt_raw, marca_nome)
-        url = buscar_google_images(queries)
+        query = _gerar_query_google(titulo, prompt_raw, marca_nome)
+        url = buscar_google_images(query, tipo_slide)
         fonte = "Google Images"
         if not url:
             url = buscar_freepik_stock(f"{titulo} {prompt_raw}"[:80])
@@ -253,8 +257,8 @@ def buscar_imagem_para_slide(slide: dict) -> dict:
             url = buscar_freepik_stock(f"{titulo} {prompt_raw}"[:80])
             fonte = "Freepik Stock"
         if not url:
-            queries = _gerar_queries_google(titulo, prompt_raw, None)
-            url = buscar_google_images(queries)
+            query = _gerar_query_google(titulo, prompt_raw, None)
+            url = buscar_google_images(query, tipo_slide)
             fonte = "Google Images"
 
     print(f"[IMAGE] Slide {slide.get('numero')} ({slide.get('tipo_slide')}) → {fonte} {'✅' if url else '❌'}")
@@ -291,9 +295,10 @@ def trocar_imagem(imagens: list, slide_num: int) -> list:
 
         _, marca_nome = detectar_marca(titulo, "", prompt)
 
+        tipo_slide = img.get("tipo_slide", "conteudo")
         if is_brand:
-            queries = _gerar_queries_google(titulo, prompt, marca_nome)
-            url = buscar_google_images(queries)
+            query = _gerar_query_google(titulo, prompt, marca_nome)
+            url = buscar_google_images(query, tipo_slide)
             fonte = "Google Images"
         else:
             url = gerar_freepik_ia(prompt)
