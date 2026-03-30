@@ -12,6 +12,7 @@ Reel não possui slides — Agent 4 é pulado no scheduler.
 
 import os
 import json
+import re
 import time
 import requests
 
@@ -73,11 +74,17 @@ def detectar_marca(titulo: str, corpo: str = "", prompt: str = "") -> tuple:
     """
     Detecta se o slide menciona uma marca ou pessoa conhecida.
     Retorna (is_brand: bool, nome_da_marca: str | None).
+    Tokens curtos (≤2 chars) exigem word boundary para evitar falsos positivos
+    como "x" batendo em "7.5x", "2x", "max", etc.
     """
     texto = (titulo + " " + corpo + " " + prompt).lower()
     for brand in BRAND_LIST:
-        if brand in texto:
-            return True, brand
+        if len(brand) <= 2:
+            if re.search(r'\b' + re.escape(brand) + r'\b', texto):
+                return True, brand
+        else:
+            if brand in texto:
+                return True, brand
     return False, None
 
 
@@ -168,12 +175,16 @@ def buscar_freepik_stock(query: str) -> str | None:
 
 # ── GOOGLE IMAGES VIA APIFY ──────────────────────────────────────────────────
 
-def _gerar_query_google(titulo: str, prompt_raw: str, marca_nome: str | None) -> str:
-    """Gera a melhor query para busca no Google Images (1 string)."""
+def _gerar_query_google(titulo: str, corpo: str, marca_nome: str | None) -> str:
+    """
+    Gera query para Google Images baseada no conteúdo real do slide.
+    - Com marca: <marca> + titulo (ex: "google Gemini 3.1 Pro foi lançado")
+    - Sem marca: titulo do slide diretamente
+    O titulo já resume o tópico principal de cada slide — é a melhor base para busca.
+    """
     if marca_nome:
-        person = BRAND_ICONS.get(marca_nome, marca_nome)
-        return f"{person} photo"
-    return f"{titulo} {prompt_raw}"[:80]
+        return f"{marca_nome} {titulo}"[:80]
+    return titulo[:80]
 
 
 def buscar_google_images(query: str, tipo_slide: str = "conteudo") -> str | None:
@@ -242,22 +253,22 @@ def buscar_imagem_para_slide(slide: dict) -> dict:
     tipo_slide = slide.get("tipo_slide", "conteudo")
 
     if is_brand:
-        # Marca / pessoa → foto real do Google
-        query = _gerar_query_google(titulo, prompt_raw, marca_nome)
+        # Marca / pessoa → foto real do Google, query baseada no conteúdo do slide
+        query = _gerar_query_google(titulo, corpo, marca_nome)
         url = buscar_google_images(query, tipo_slide)
         fonte = "Google Images"
         if not url:
-            url = buscar_freepik_stock(f"{titulo} {prompt_raw}"[:80])
+            url = buscar_freepik_stock(titulo[:80])
             fonte = "Freepik Stock"
     else:
         # Abstrato / criativo → arte gerada pelo Freepik IA
         url = gerar_freepik_ia(prompt_enriquecido)
         fonte = "Freepik IA"
         if not url:
-            url = buscar_freepik_stock(f"{titulo} {prompt_raw}"[:80])
+            url = buscar_freepik_stock(titulo[:80])
             fonte = "Freepik Stock"
         if not url:
-            query = _gerar_query_google(titulo, prompt_raw, None)
+            query = _gerar_query_google(titulo, corpo, None)
             url = buscar_google_images(query, tipo_slide)
             fonte = "Google Images"
 
@@ -297,7 +308,8 @@ def trocar_imagem(imagens: list, slide_num: int) -> list:
 
         tipo_slide = img.get("tipo_slide", "conteudo")
         if is_brand:
-            query = _gerar_query_google(titulo, prompt, marca_nome)
+            # corpo não está armazenado na imagem — usa titulo que já resume o slide
+            query = _gerar_query_google(titulo, "", marca_nome)
             url = buscar_google_images(query, tipo_slide)
             fonte = "Google Images"
         else:
