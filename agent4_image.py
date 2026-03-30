@@ -258,6 +258,9 @@ def buscar_imagem_para_slide(slide: dict) -> dict:
         url = buscar_google_images(query, tipo_slide)
         fonte = "Google Images"
         if not url:
+            url = gerar_freepik_ia(prompt_enriquecido)
+            fonte = "Freepik IA"
+        if not url:
             url = buscar_freepik_stock(titulo[:80])
             fonte = "Freepik Stock"
     else:
