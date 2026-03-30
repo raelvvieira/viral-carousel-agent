@@ -6,6 +6,7 @@ para ganhar profundidade sobre o tema. Output: copy_completa + resumo_pesquisa (
 
 import os
 import json
+import time
 import anthropic
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -43,36 +44,42 @@ def executar_buscas(viral_payload: dict) -> dict:
 
     prompt = BUSCA_PROMPT.format(copy_ref=copy_ref)
 
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}]
-        )
-
-        texto = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                texto += block.text
-
+    texto = ""
+    for tentativa in range(3):
         try:
-            inicio = texto.find("{")
-            fim = texto.rfind("}") + 1
-            if inicio >= 0 and fim > inicio:
-                return json.loads(texto[inicio:fim])
-        except json.JSONDecodeError:
-            pass
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": prompt}]
+            )
+            for block in response.content:
+                if hasattr(block, "text"):
+                    texto += block.text
+            break
+        except anthropic.RateLimitError:
+            if tentativa < 2:
+                print(f"[RESEARCH] Rate limit — aguardando 60s (tentativa {tentativa + 1}/3)...")
+                time.sleep(60)
+            else:
+                return {"tema_central": "", "buscas": [], "erro": "Rate limit excedido após 3 tentativas."}
+        except Exception as e:
+            print(f"[RESEARCH] Erro nas buscas: {e}")
+            return {"tema_central": "", "buscas": [], "erro": str(e)}
 
-        return {
-            "tema_central": "",
-            "buscas": [],
-            "texto_bruto": texto[:2000]
-        }
+    try:
+        inicio = texto.find("{")
+        fim = texto.rfind("}") + 1
+        if inicio >= 0 and fim > inicio:
+            return json.loads(texto[inicio:fim])
+    except json.JSONDecodeError:
+        pass
 
-    except Exception as e:
-        print(f"[RESEARCH] Erro nas buscas: {e}")
-        return {"tema_central": "", "buscas": [], "erro": str(e)}
+    return {
+        "tema_central": "",
+        "buscas": [],
+        "texto_bruto": texto[:2000]
+    }
 
 
 # ── RESUMO DA PESQUISA ───────────────────────────────────────────────────────
@@ -94,16 +101,23 @@ RESULTADOS DAS BUSCAS:
 
 Retorne APENAS o parágrafo, sem título, sem bullet points."""
 
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=512,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        return response.content[0].text.strip()
-    except Exception as e:
-        print(f"[RESEARCH] Erro ao montar resumo: {e}")
-        return f"Pesquisa realizada sobre: {dados_busca.get('tema_central', 'tema do post')}."
+    for tentativa in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=512,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text.strip()
+        except anthropic.RateLimitError:
+            if tentativa < 2:
+                print(f"[RESEARCH] Rate limit no resumo — aguardando 60s (tentativa {tentativa + 1}/3)...")
+                time.sleep(60)
+            else:
+                return f"Pesquisa realizada sobre: {dados_busca.get('tema_central', 'tema do post')}."
+        except Exception as e:
+            print(f"[RESEARCH] Erro ao montar resumo: {e}")
+            return f"Pesquisa realizada sobre: {dados_busca.get('tema_central', 'tema do post')}."
 
 
 # ── PAYLOAD DO BRIEFING ──────────────────────────────────────────────────────

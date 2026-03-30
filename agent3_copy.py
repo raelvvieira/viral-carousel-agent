@@ -8,6 +8,7 @@ o formato escolhido (carrossel, post único, reel).
 
 import os
 import json
+import time
 import anthropic
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
@@ -227,14 +228,30 @@ def gerar_copy(briefing_payload: dict, formato: str = "carrossel", num_slides: i
     else:
         return {"erro": f"Formato desconhecido: {formato}"}
 
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        texto = response.content[0].text.strip()
+    texto = ""
+    for tentativa in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            texto = response.content[0].text.strip()
+            break
+        except anthropic.RateLimitError:
+            if tentativa < 2:
+                print(f"[COPY] Rate limit — aguardando 60s (tentativa {tentativa + 1}/3)...")
+                time.sleep(60)
+            else:
+                return {"erro": "Rate limit excedido após 3 tentativas. Tente novamente em 1 min."}
+        except Exception as e:
+            print(f"[COPY] Erro ao gerar copy: {e}")
+            return {"erro": str(e)}
 
+    if not texto:
+        return {"erro": "Nenhuma resposta gerada."}
+
+    try:
         # Extrai JSON
         inicio = texto.find("{")
         fim = texto.rfind("}") + 1
@@ -242,12 +259,8 @@ def gerar_copy(briefing_payload: dict, formato: str = "carrossel", num_slides: i
             return json.loads(texto[inicio:fim])
 
         return {"erro": "Resposta sem JSON válido", "texto_bruto": texto[:1000]}
-
     except json.JSONDecodeError as e:
         return {"erro": f"Erro ao parsear JSON: {e}", "texto_bruto": texto[:1000]}
-    except Exception as e:
-        print(f"[COPY] Erro ao gerar copy: {e}")
-        return {"erro": str(e)}
 
 
 def ajustar_slide(copy_payload: dict, slide_num: int, instrucao: str) -> dict:
@@ -278,13 +291,28 @@ Retorne APENAS o JSON do slide reescrito (mesmo formato):
   "notas_design": "..."
 }}"""
 
+    texto = ""
+    for tentativa in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            texto = response.content[0].text.strip()
+            break
+        except anthropic.RateLimitError:
+            if tentativa < 2:
+                print(f"[COPY] Rate limit ao ajustar slide — aguardando 60s (tentativa {tentativa + 1}/3)...")
+                time.sleep(60)
+            else:
+                print(f"[COPY] Rate limit excedido ao ajustar slide {slide_num}.")
+                return copy_payload
+        except Exception as e:
+            print(f"[COPY] Erro ao ajustar slide {slide_num}: {e}")
+            return copy_payload
+
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        texto = response.content[0].text.strip()
         inicio = texto.find("{")
         fim = texto.rfind("}") + 1
         novo_slide = json.loads(texto[inicio:fim])
@@ -293,9 +321,8 @@ Retorne APENAS o JSON do slide reescrito (mesmo formato):
         slides[slide_num - 1] = novo_slide
         copy_payload["copy"]["slides"] = slides
         return copy_payload
-
     except Exception as e:
-        print(f"[COPY] Erro ao ajustar slide {slide_num}: {e}")
+        print(f"[COPY] Erro ao parsear slide ajustado: {e}")
         return copy_payload
 
 

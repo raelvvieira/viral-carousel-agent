@@ -426,6 +426,11 @@ async def executar_research(bot: Bot):
             return
 
         _estado["briefing_payload"] = payload
+        try:
+            with open("/tmp/wavy_briefing.json", "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False)
+        except Exception:
+            pass
         resumo = payload.get("resumo_pesquisa", "")
         tema = payload.get("tema_central", "")
 
@@ -502,6 +507,11 @@ async def executar_copy(bot: Bot):
         return
 
     _estado["copy_payload"] = payload
+    try:
+        with open("/tmp/wavy_copy.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
     copy_data = payload.get("copy_aprovada", {})
     copy_txt = copy_data.get("copy_formatada", "")
 
@@ -629,6 +639,11 @@ async def executar_images(bot: Bot):
         return
 
     _estado["image_payload"] = payload
+    try:
+        with open("/tmp/wavy_images.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+    except Exception:
+        pass
     imagens = payload.get("imagens_aprovadas", [])
     ok = payload.get("imagens_ok", 0)
     total = payload.get("total_imagens", 0)
@@ -808,6 +823,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Copy: tentar outro formato (reutiliza briefing_payload, sem reiniciar pipeline) ──
     elif data == "copy_outro_formato":
         await perguntar_formato(bot)
+
+    # ── Retomar pipeline a partir de etapa salva ──
+    elif data == "retomar_copy":
+        await perguntar_formato(bot)
+
+    elif data == "retomar_imagens":
+        context.application.create_task(executar_images(bot))
+
+    elif data == "retomar_design":
+        await perguntar_template(bot)
 
     # ── Imagens aprovadas ──
     elif data == "images_ok":
@@ -1005,6 +1030,62 @@ async def cmd_base(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def cmd_retomar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Retoma pipeline a partir de etapa já concluída, carregando payloads salvos."""
+    if update.effective_chat.id != TELEGRAM_CHAT_ID:
+        return
+    bot = context.bot
+    opcoes = []
+
+    try:
+        with open("/tmp/wavy_briefing.json", "r", encoding="utf-8") as f:
+            _estado["briefing_payload"] = json.load(f)
+        tema = _estado["briefing_payload"].get("tema_central", "")
+        label = f"✍️ Gerar copy — {tema[:28]}" if tema else "✍️ Gerar copy (novo formato)"
+        opcoes.append(InlineKeyboardButton(label, callback_data="retomar_copy"))
+    except Exception:
+        pass
+
+    try:
+        with open("/tmp/wavy_copy.json", "r", encoding="utf-8") as f:
+            _estado["copy_payload"] = json.load(f)
+        copy_ap = _estado["copy_payload"].get("copy_aprovada", {})
+        _estado["formato"] = copy_ap.get("formato", "carrossel")
+        _estado["num_slides"] = copy_ap.get("num_slides", 7)
+        tema = _estado["copy_payload"].get("tema_central", "")
+        fmt = _estado["formato"].replace("_", " ")
+        label = f"🖼 Buscar imagens — {fmt}" + (f" · {tema[:18]}" if tema else "")
+        opcoes.append(InlineKeyboardButton(label, callback_data="retomar_imagens"))
+    except Exception:
+        pass
+
+    try:
+        with open("/tmp/wavy_images.json", "r", encoding="utf-8") as f:
+            _estado["image_payload"] = json.load(f)
+        ok = _estado["image_payload"].get("imagens_ok", "?")
+        total = _estado["image_payload"].get("total_imagens", "?")
+        opcoes.append(InlineKeyboardButton(
+            f"🎨 Escolher template — {ok}/{total} imagens",
+            callback_data="retomar_design"
+        ))
+    except Exception:
+        pass
+
+    if not opcoes:
+        await update.message.reply_text(
+            "Nenhuma sessão anterior encontrada.\n"
+            "Use /rodar para iniciar o pipeline."
+        )
+        return
+
+    teclado = InlineKeyboardMarkup([[btn] for btn in opcoes])
+    await update.message.reply_text(
+        "↩️ *Retomar pipeline* — escolha a etapa:",
+        parse_mode="Markdown",
+        reply_markup=teclado
+    )
+
+
 async def cmd_cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id != TELEGRAM_CHAT_ID:
         return
@@ -1018,14 +1099,14 @@ async def cmd_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "*Comandos disponíveis*\n\n"
         "/rodar — Inicia o pipeline completo\n"
+        "/retomar — Continua de uma etapa anterior\n"
         "/status — Ver etapa atual\n"
         "/base — Gerenciar base de perfis\n"
         "/cancelar — Cancela o pipeline atual\n"
         "/ajuda — Esta mensagem\n\n"
-        "*Retomadas parciais:*\n"
-        "_\"refaz só a copy\"_ — pula para etapa 4\n"
-        "_\"troca as imagens\"_ — pula para etapa 5\n"
-        "_\"refaz o design com template B\"_ — pula para etapa 6",
+        "*Como funciona o /retomar:*\n"
+        "Mostra botões para retomar a partir da copy,\n"
+        "imagens ou template — sem repetir Agent 1 e 2.",
         parse_mode="Markdown"
     )
 
@@ -1057,6 +1138,7 @@ def main():
     async def post_init(app: Application):
         await app.bot.set_my_commands([
             BotCommand("rodar",    "Iniciar pipeline completo"),
+            BotCommand("retomar",  "Continuar de etapa anterior"),
             BotCommand("status",   "Ver status atual"),
             BotCommand("base",     "Gerenciar base de perfis"),
             BotCommand("cancelar", "Cancelar pipeline"),
@@ -1085,6 +1167,7 @@ def main():
     # Comandos
     app.add_handler(CommandHandler("start",    cmd_start))
     app.add_handler(CommandHandler("rodar",    cmd_rodar))
+    app.add_handler(CommandHandler("retomar",  cmd_retomar))
     app.add_handler(CommandHandler("status",   cmd_status))
     app.add_handler(CommandHandler("base",     cmd_base))
     app.add_handler(CommandHandler("cancelar", cmd_cancelar))
