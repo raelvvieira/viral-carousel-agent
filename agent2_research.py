@@ -45,7 +45,7 @@ def executar_buscas(viral_payload: dict) -> dict:
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}]
@@ -96,7 +96,7 @@ Retorne APENAS o parágrafo, sem título, sem bullet points."""
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=512,
             messages=[{"role": "user", "content": prompt}]
         )

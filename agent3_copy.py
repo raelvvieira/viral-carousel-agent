@@ -229,7 +229,7 @@ def gerar_copy(briefing_payload: dict, formato: str = "carrossel", num_slides: i
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -280,7 +280,7 @@ Retorne APENAS o JSON do slide reescrito (mesmo formato):
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}]
         )
